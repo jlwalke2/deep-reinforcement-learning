@@ -1,19 +1,15 @@
-import random as rnd
-import numpy as np
 import gym
 from Agents import DoubleDeepQAgent
 from Memories import Memory
 from Policies import BoltzmannPolicy
 
-import keras.backend as K
 from keras.models import Sequential
-from keras.layers import Dense, Activation, Dropout, Flatten
-from keras.optimizers import sgd, rmsprop, adam, adadelta
+from keras.layers import Dense
+from keras.optimizers import rmsprop
 
 SEED = 123
 
 env = gym.make('CartPole-v0')
-env.seed(SEED)
 
 num_features = env.observation_space.shape[0]
 num_actions = env.action_space.n
