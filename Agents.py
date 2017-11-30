@@ -1,4 +1,5 @@
 import gym
+import gym.wrappers
 from keras.models import Sequential
 import logging
 import numpy as np
@@ -20,8 +21,11 @@ class Agent:
             self.num_features = env.observation_space.shape[0]
 
         self.api_key = api_key
-        self.logger = logging.getLogger()
+        self.logger = logging.getLogger('root.' + __name__)
         self.logger.setLevel(logging.INFO)
+
+        # TODO:  Add easy way to turn on/off logging from different components
+#        self.logger.parent.handlers[0].addFilter(logging.Filter('root.' + __name__))
 
         if not seed is None:
             env.seed(seed)
@@ -46,24 +50,31 @@ class DoubleDeepQAgent(Agent):
         self.preprocess_steps = []
         
 
-            
+
     def train(self, max_episodes=500, steps_before_training=0, target_model_update=1000, render_every_n=1, upload=False, running_average_len=50):
         # TODO: Running avg length should be handled by logging/metrics framework
-        
+
         if upload:
             assert self.api_key, 'An API key must be specified before uploading training results.'
             monitor_path = mkdtemp()
             self.env = gym.wrappers.Monitor(self.env, monitor_path)
 
+        episode_completed_events = []
+        if 'on_episode_complete' in dir(self.policy):
+            episode_completed_events.append(self.policy.on_episode_complete)
+
         metrics = pd.DataFrame(dict(Error=np.zeros(max_episodes), Reward=np.zeros(max_episodes)))
-        # TODO: Callbacks, metrics
-            
+
         try:
             step_count = 0
-            
+
             for episode_count in range(1, max_episodes + 1):
                 render = episode_count % render_every_n == 0
                 total_reward, total_error, steps = self._run_episode(target_model_update, steps_before_training, step_count, render)
+
+                # Fire any notifications
+                for event in episode_completed_events:
+                    event()
 
                 step_count += steps
                 metrics.Reward[episode_count] = total_reward
@@ -71,18 +82,17 @@ class DoubleDeepQAgent(Agent):
 
                 start = max(0, episode_count - running_average_len)
                 avg_reward = sum(metrics.Reward[start:episode_count + 1]) / running_average_len
-                self.logger.info('Episode {} complete.  Error={}, Total Reward:\t{}   Moving Avg Reward:\t{}\tBuffer: {}'.format(
-                        episode_count, total_error, total_reward, avg_reward, len(self.memory)))
-
+                self.logger.info('Episode {}: \tError: {},\tTotal Reward: {} \tMoving Avg Reward:{}\tBuffer: {}'.format(
+                        episode_count, round(total_error, 2), total_reward, avg_reward, len(self.memory)))
 
             self.env.close()
-            
+
         except KeyboardInterrupt:
             return
         finally:
             if upload:
                 rmtree(monitor_path) # Cleanup the temp dir
-                
+
         return metrics
     
     
