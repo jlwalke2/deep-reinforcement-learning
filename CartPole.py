@@ -1,7 +1,7 @@
 import gym
 from Agents import DoubleDeepQAgent
 from Memories import Memory
-from Policies import BoltzmannPolicy
+from Policies import EpsilonGreedyPolicy
 
 from keras.models import Sequential
 from keras.layers import Dense
@@ -23,8 +23,8 @@ model.compile(loss='mse', optimizer=rmsprop(lr=1e-3))
 print(model.summary())
 
 memory = Memory(50000)
-policy = BoltzmannPolicy()
+policy = EpsilonGreedyPolicy(min=0.05, decay=0.99)
 
 agent = DoubleDeepQAgent(env, model, policy, memory, gamma=0.99, api_key='sk_giCGTLHbRVjTTS7YYMtuA', seed=SEED)
 
-agent.train(target_model_update=1e-2, upload=False, max_episodes=500)
+agent.train(target_model_update=1e-2, upload=False, max_episodes=200)
