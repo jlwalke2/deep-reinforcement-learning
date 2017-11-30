@@ -1,11 +1,25 @@
+import logging
 import numpy as np
 
-class BoltzmannPolicy():
+class AbstractPolicy():
+    def __init__(self):
+        self.logger = logging.getLogger('root.' + __name__)
+        self.logger.setLevel(logging.INFO)
+
+    def __call__(self, *args, **kwargs):
+        raise NotImplementedError
+
+
+class BoltzmannPolicy(AbstractPolicy):
     def __init__(self, min_temp=0.0, max_temp=100):
+        super().__init__()
+
         self.min_temp = min_temp
         self.max_temp = max_temp
 
     def __call__(self, qvalues, *args, **kwargs):
+        # TODO: Better way to handle overflow?
+
         probs = np.round(np.exp(qvalues.astype('float64')), 5)  # Convert to float64 to avoid overflow from exp
         probs /= np.sum(probs)              # Normalize to sum to 1
         probs[0] -= (np.sum(probs) - 1.0)   # Total probability can be close but != 1.0.  +/- any difference arbitrarily to the first action
@@ -15,8 +29,10 @@ class BoltzmannPolicy():
         return np.random.choice(range(qvalues.size), p=probs)
 
 
-class EpsilonGreedyPolicy():
+class EpsilonGreedyPolicy(AbstractPolicy):
     def __init__(self, max=1.0, min=0.0, decay=0.9, exploration_episodes=0):
+        super().__init__()
+
         self.epsilon = max
         self.min = min
         self.decay = decay
@@ -38,5 +54,5 @@ class EpsilonGreedyPolicy():
         self.episode_count += 1
         if self.episode_count > self.exploration_episodes:
             self.epsilon = max(self.epsilon * self.decay, self.min)
-        print('Episode: {}  Epsilon: {}'.format(self.episode_count, self.epsilon))
-        # TODO: Add to logger
+
+        self.logger.info('Episode: {}  Epsilon: {}'.format(self.episode_count, round(self.epsilon, 2)))
