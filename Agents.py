@@ -91,6 +91,7 @@ class DoubleDeepQAgent(Agent):
             return
         finally:
             if upload:
+                gym.upload(monitor_path, api_key=self.api_key)
                 rmtree(monitor_path) # Cleanup the temp dir
 
         return metrics
