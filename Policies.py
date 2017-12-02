@@ -3,7 +3,7 @@ import numpy as np
 
 class AbstractPolicy():
     def __init__(self):
-        self.logger = logging.getLogger('root.' + __name__)
+        self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.INFO)
 
     def __call__(self, *args, **kwargs):
@@ -26,6 +26,7 @@ class BoltzmannPolicy(AbstractPolicy):
         np.clip(probs, 0., 1., out=probs)   # Ensure no probability outside 0..1
         probs = probs.ravel()
 
+        self.logger.debug('Q={}\tP={}'.format(qvalues, probs))
         return np.random.choice(range(qvalues.size), p=probs)
 
 
@@ -48,6 +49,7 @@ class EpsilonGreedyPolicy(AbstractPolicy):
 
             # Randomly choose one of the best actions
             a = np.random.choice(best_actions.flatten())
+            self.logger.debug('Epsilon: {}  Q: {}'.format(self.epsilon, qvalues))
             return a
 
     def on_episode_complete(self):
