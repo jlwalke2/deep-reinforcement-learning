@@ -8,6 +8,10 @@ import random as rnd
 from shutil import rmtree
 from tempfile import mkdtemp
 
+# TODO: Change exploration episodes to exploration steps?
+# TODO: Add max steps limit
+# TODO: Report # of steps per episode
+
 class Agent:
     def __init__(self, env, model, policy, memory, api_key=None, seed=None):
         self.env = env
@@ -21,7 +25,7 @@ class Agent:
             self.num_features = env.observation_space.shape[0]
 
         self.api_key = api_key
-        self.logger = logging.getLogger('root.' + __name__)
+        self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.INFO)
 
         # TODO:  Add easy way to turn on/off logging from different components
@@ -36,6 +40,13 @@ class Agent:
     def addHandlers(self, handlers):
         for handler in handlers:
             self.logger.addHandler(handler)
+
+    def preprocess_state(self, s, a, r, s_prime, episode_done):
+        '''
+        Called after a new step in the environment, but before the observation is added to memory or used for training.
+        Override to perform reward shaping
+        '''
+        return (s, a, r, s_prime, episode_done)
 
 
 class DeepQAgent(Agent):
@@ -81,7 +92,7 @@ class DoubleDeepQAgent(Agent):
                 metrics.Error[episode_count] = total_error
 
                 start = max(0, episode_count - running_average_len)
-                avg_reward = sum(metrics.Reward[start:episode_count + 1]) / running_average_len
+                avg_reward = sum(metrics.Reward[start:episode_count + 1]) / min(episode_count, running_average_len)
                 self.logger.info('Episode {}: \tError: {},\tTotal Reward: {} \tMoving Avg Reward:{}\tBuffer: {}'.format(
                         episode_count, round(total_error, 2), total_reward, avg_reward, len(self.memory)))
 
@@ -116,6 +127,8 @@ class DoubleDeepQAgent(Agent):
 
             step_count += 1
             total_reward += r  # Track rewards without shaping
+
+            s, a, r, s_prime, episode_done = self.preprocess_state(s, a, r, s_prime, episode_done)
 
             self.memory.append((s, a, r, s_prime, episode_done))
 
