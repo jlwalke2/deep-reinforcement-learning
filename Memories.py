@@ -53,3 +53,33 @@ class Memory():
             return self.max_len
         else:
             return self.index
+
+
+class PrioritizedMemory(Memory):
+    def __init__(self, maxlen=1000, sample_size=32):
+        super().__init__(maxlen, sample_size)
+
+    def append(self, x):
+        x = list(x) + [np.finfo('float32').max]  # Initial error amount.  Max value?
+
+        super().append(x)
+
+    def sample(self, n=0):
+        if not n:
+            n = self.sample_size
+        oversample = n > len(self)
+        nrows = self.buffer.shape[0] if self.is_full else self.index
+
+        probs = self.buffer[:nrows, -1].copy()
+        probs -= - probs.min()
+        probs /= probs.sum()
+
+        indx = np.random.choice(nrows, n, replace=oversample, p=probs)
+
+        states = self.buffer[indx, 0:self._field_splits[0]]
+        actions = self.buffer[indx, self._field_splits[0]:self._field_splits[1]]
+        rewards = self.buffer[indx, self._field_splits[1]:self._field_splits[2]]
+        s_primes = self.buffer[indx, self._field_splits[2]:self._field_splits[3]]
+        flags = self.buffer[indx, self._field_splits[3]:self._field_splits[4]].astype('bool_')
+
+        return states, actions, rewards, s_primes, flags
