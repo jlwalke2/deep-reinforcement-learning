@@ -18,11 +18,25 @@ class BoltzmannPolicy(AbstractPolicy):
         self.max_temp = max_temp
 
     def __call__(self, qvalues, *args, **kwargs):
-        # TODO: Better way to handle overflow?
+        # A simple implementation of Boltzmann can have issues with large q-values since the exponentiation
+        # can result in overflow, leading to an incorrect policy.  To get around this we scale the q-values down
+        # into a reasonable range prior to exponentiation.  Since the probabilities only depend on the *difference*
+        # between q-values instead of the actual values, we can +/- q-values arbitrarily without affecting the outcome.
+        # Additionally, given two numbers a, b where a = b + d for some delta d, the probability of choosing b rapidly
+        # approaches 0 as d increases.  Given this, we need only consider q-values that are within d of the max q-value.
+        delta = 20
+        ignore = qvalues < qvalues.max() - delta
+        keep = np.logical_not(ignore)
 
-        probs = np.round(np.exp(qvalues.astype('float64')), 5)  # Convert to float64 to avoid overflow from exp
-        probs /= np.sum(probs)              # Normalize to sum to 1
-        probs[0] -= (np.sum(probs) - 1.0)   # Total probability can be close but != 1.0.  +/- any difference arbitrarily to the first action
+        adj_q = qvalues - qvalues[keep].min()
+        if np.any(ignore):
+            adj_q[ignore] = 0               # These are now negative, so zero out to avoid underflow
+
+        probs = np.exp(adj_q)
+        if np.any(ignore):
+            probs[ignore] = 0               # exp(0) = 1 so zero out these probabilities
+
+        probs /= np.sum(probs)              # Normalize remaining probabilities to sum to 1
         np.clip(probs, 0., 1., out=probs)   # Ensure no probability outside 0..1
         probs = probs.ravel()
 
@@ -38,7 +52,6 @@ class EpsilonGreedyPolicy(AbstractPolicy):
         self.min = min
         self.decay = decay
         self.exploration_episodes = exploration_episodes
-        self.episode_count = 0
 
     def __call__(self, qvalues, *args, **kwargs):
         if np.random.rand() <= self.epsilon:
@@ -52,9 +65,10 @@ class EpsilonGreedyPolicy(AbstractPolicy):
             self.logger.debug('Epsilon: {}  Q: {}'.format(self.epsilon, qvalues))
             return a
 
-    def on_episode_complete(self):
-        self.episode_count += 1
-        if self.episode_count > self.exploration_episodes:
+    def on_episode_end(self, *args, **kwargs):
+        assert 'episode_count' in kwargs.keys()
+
+        if kwargs['episode_count'] > self.exploration_episodes:
             self.epsilon = max(self.epsilon * self.decay, self.min)
 
-        self.logger.info('Episode: {}  Epsilon: {}'.format(self.episode_count, round(self.epsilon, 2)))
+        self.logger.info('Epsilon: {}'.format(round(self.epsilon, 2)))
