@@ -7,13 +7,18 @@ import pandas as pd
 import random as rnd
 from shutil import rmtree
 from tempfile import mkdtemp
+from EventHandler import EventHandler
 
 # TODO: Change exploration episodes to exploration steps?
 # TODO: Add max steps limit
 # TODO: Report # of steps per episode
 
+class Metrics():
+    pass
+
+
 class Agent:
-    def __init__(self, env, model, policy, memory, api_key=None, seed=None):
+    def __init__(self, env, model, policy, memory, logger=None, api_key=None, seed=None):
         self.env = env
         self.model = model
         self.policy = policy
@@ -25,11 +30,37 @@ class Agent:
             self.num_features = env.observation_space.shape[0]
 
         self.api_key = api_key
-        self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(logging.INFO)
+        if logger:
+            self.logger = logger
+        else:
+            self.logger = logging.getLogger(__name__)
+            self.logger.setLevel(logging.INFO)
 
         # TODO:  Add easy way to turn on/off logging from different components
 #        self.logger.parent.handlers[0].addFilter(logging.Filter('root.' + __name__))
+
+        self.episode_start = EventHandler()
+        self.episode_end = EventHandler()
+        self.step_start = EventHandler()
+        self.step_end = EventHandler()
+        self.train_start = EventHandler()
+        self.train_end = EventHandler()
+
+        # Automatically hook up any events
+        for obs in [self.policy, self.memory, self.logger]:
+            if 'on_episode_start' in dir(obs):
+                self.episode_start += obs.on_episode_start
+            if 'on_episode_end' in dir(obs):
+                self.episode_end += obs.on_episode_end
+            if 'on_step_start' in dir(obs):
+                self.step_start += obs.on_step_start
+            if 'on_step_end' in dir(obs):
+                self.step_end += obs.on_step_end
+            if 'on_train_start' in dir(obs):
+                self.train_start += obs.on_train_start
+            if 'on_train_end' in dir(obs):
+                self.train_end += obs.on_train_end
+
 
         if not seed is None:
             env.seed(seed)
@@ -40,6 +71,7 @@ class Agent:
     def addHandlers(self, handlers):
         for handler in handlers:
             self.logger.addHandler(handler)
+
 
     def preprocess_state(self, s, a, r, s_prime, episode_done):
         '''
@@ -52,14 +84,14 @@ class Agent:
 class DeepQAgent(Agent):
     pass
 
+
 class DoubleDeepQAgent(Agent):
-    def __init__(self, env, model, policy, memory, gamma=0.9, api_key=None, seed=None):
-        super().__init__(env, model, policy, memory, api_key, seed)
+    def __init__(self, env, model, policy, memory, logger=None, gamma=0.9, api_key=None, seed=None):
+        super().__init__(env, model, policy, memory, logger, api_key, seed)
 
         self.target_model = Sequential.from_config(self.model.get_config())
         self.gamma = gamma
         self.preprocess_steps = []
-        
 
 
     def train(self, max_episodes=500, steps_before_training=0, target_model_update=1000, render_every_n=1, upload=False, running_average_len=50):
@@ -70,22 +102,19 @@ class DoubleDeepQAgent(Agent):
             monitor_path = mkdtemp()
             self.env = gym.wrappers.Monitor(self.env, monitor_path)
 
-        episode_completed_events = []
-        if 'on_episode_complete' in dir(self.policy):
-            episode_completed_events.append(self.policy.on_episode_complete)
-
         metrics = pd.DataFrame(dict(Error=np.zeros(max_episodes), Reward=np.zeros(max_episodes)))
 
         try:
             step_count = 0
 
             for episode_count in range(1, max_episodes + 1):
+                self.episode_start(episode_count=episode_count)
+
                 render = episode_count % render_every_n == 0
                 total_reward, total_error, steps = self._run_episode(target_model_update, steps_before_training, step_count, render)
 
                 # Fire any notifications
-                for event in episode_completed_events:
-                    event()
+                self.episode_end(episode_count=episode_count, total_reward=total_reward, total_error=total_error, num_steps=steps)
 
                 step_count += steps
                 metrics.Reward[episode_count] = total_reward
@@ -94,7 +123,7 @@ class DoubleDeepQAgent(Agent):
                 start = max(0, episode_count - running_average_len)
                 avg_reward = sum(metrics.Reward[start:episode_count + 1]) / min(episode_count, running_average_len)
                 self.logger.info('Episode {}: \tError: {},\tTotal Reward: {} \tMoving Avg Reward:{}\tBuffer: {}'.format(
-                        episode_count, round(total_error, 2), total_reward, avg_reward, len(self.memory)))
+                        episode_count, round(total_error, 2), total_reward, round(avg_reward, 2), len(self.memory)))
 
             self.env.close()
 
@@ -120,6 +149,9 @@ class DoubleDeepQAgent(Agent):
             if render:
                 self.env.render()
             s = np.asarray(s)
+
+            self.step_start(step=step_count, s=s)
+
             q_values = self.model.predict_on_batch(s.reshape(1,-1))
             a = self.policy(q_values)
 
@@ -144,6 +176,9 @@ class DoubleDeepQAgent(Agent):
             if step_count > steps_before_training:
                 error = self._update_weights()
                 total_error += error
+
+            self.step_end(step=step_count, s=s, s_prime=s_prime, a=a, r=r, episode_done=episode_done)
+            self.logger.debug("S: {}\tA: {}\tR: {}\tS': {}\tDone: {}".format(s, a, r, s_prime, episode_done))
 
             s = s_prime
 
@@ -177,6 +212,8 @@ class DoubleDeepQAgent(Agent):
         assert rewards.shape == (n, 1)
         assert flags.shape == (n, 1)
 
+        self.train_start(num_samples=n, s=states, a=actions, r=rewards, s_prime=s_primes, episode_done=flags)
+
         # Double Deep Q-Learning
         # Use online model to pick best action from s'
         s_prime_actions = self.model.predict_on_batch(s_primes)
@@ -193,8 +230,12 @@ class DoubleDeepQAgent(Agent):
         updated_targets = rewards + self.gamma * best_values.reshape(rewards.shape)
 
         targets = self.model.predict_on_batch(states)
+        # TODO: Add callback w/ diff for priority replay
+        diff = targets[range(n), actions.astype('int32').ravel()] - updated_targets[:, 0]
         targets[range(n), actions.astype('int32').ravel()] = updated_targets[:, 0]
 
         error = self.model.train_on_batch(states, targets)
+
+        self.train_end(num_samples=n, s=states, a=actions, r=rewards, s_prime=s_primes, episode_done=flags, target=targets, delta=diff, error=error)
 
         return error

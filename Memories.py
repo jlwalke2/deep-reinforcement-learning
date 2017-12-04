@@ -59,6 +59,8 @@ class PrioritizedMemory(Memory):
     def __init__(self, maxlen=1000, sample_size=32):
         super().__init__(maxlen, sample_size)
 
+        self.last_sample = None
+
     def append(self, x):
         x = list(x) + [np.finfo('float32').max]  # Initial error amount.  Max value?
 
@@ -75,6 +77,7 @@ class PrioritizedMemory(Memory):
         probs /= probs.sum()
 
         indx = np.random.choice(nrows, n, replace=oversample, p=probs)
+        self.last_sample = indx # Save so we can update errors later
 
         states = self.buffer[indx, 0:self._field_splits[0]]
         actions = self.buffer[indx, self._field_splits[0]:self._field_splits[1]]
@@ -83,3 +86,10 @@ class PrioritizedMemory(Memory):
         flags = self.buffer[indx, self._field_splits[3]:self._field_splits[4]].astype('bool_')
 
         return states, actions, rewards, s_primes, flags
+
+    def on_train_end(self, *args, **kwargs):
+        if 'delta' in kwargs:
+            assert self.last_sample is not None
+
+            self.buffer[self.last_sample, -1] = np.abs(kwargs['delta'])
+            pass
