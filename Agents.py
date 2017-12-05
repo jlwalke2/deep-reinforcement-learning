@@ -91,19 +91,14 @@ class Agent:
         self.train_end = EventHandler()
 
         # Automatically hook up any events
-        for obs in [self.policy, self.memory, self.logger]:
-            if 'on_episode_start' in dir(obs):
-                self.episode_start += obs.on_episode_start
-            if 'on_episode_end' in dir(obs):
-                self.episode_end += obs.on_episode_end
-            if 'on_step_start' in dir(obs):
-                self.step_start += obs.on_step_start
-            if 'on_step_end' in dir(obs):
-                self.step_end += obs.on_step_end
-            if 'on_train_start' in dir(obs):
-                self.train_start += obs.on_train_start
-            if 'on_train_end' in dir(obs):
-                self.train_end += obs.on_train_end
+        for event in ['on_episode_start', 'on_episode_end', 'on_step_start', 'on_step_end', 'on_train_start', 'on_train_end']:
+            handler = event.replace('on_', '')
+
+            if handler in dir(self):
+                handler = getattr(self, handler)
+                for observer in [self.policy, self.memory, self.logger]:
+                    if event in dir(observer):
+                        handler += getattr(observer, event)
 
         if not seed is None:
             env.seed(seed)
@@ -196,7 +191,7 @@ class DoubleDeepQAgent(DeepQAgent):
             s, a, r, s_prime, episode_done = self.preprocess_state(s, a, r, s_prime, episode_done)
 
             # Force the episode to end if we've reached the maximum number of steps allowed
-            if self.max_steps_per_episode > 0 and step_count >= self.max_steps_per_episode:
+            if self.max_steps_per_episode and step_count >= self.max_steps_per_episode:
                 episode_done = True
 
             self.memory.append((s, a, r, s_prime, episode_done))
