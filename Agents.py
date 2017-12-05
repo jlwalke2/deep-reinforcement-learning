@@ -9,17 +9,13 @@ from tempfile import mkdtemp
 from EventHandler import EventHandler
 from collections import deque
 from datetime import datetime
+import pandas as pd
+
 
 # TODO: Change exploration episodes to exploration steps?
-# TODO: Add max steps limit
-# TODO: Report # of steps per episode
 
 class Monitor(logging.getLoggerClass()):
     '''Performance monitor that handles logging and metric calculations.'''
-
-    # TODO: Score per episode
-    # TODO: Average error per episode?
-    # TODO: Error per step?
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -27,6 +23,7 @@ class Monitor(logging.getLoggerClass()):
         self.recent_rewards = deque(maxlen=50)
 
     def on_episode_start(self, *args, **kwargs):
+        # Save start time so we can calculate episode duration later
         self.episode_start_time = datetime.now()
 
     def on_episode_end(self, *args, **kwargs):
@@ -56,6 +53,18 @@ class Monitor(logging.getLoggerClass()):
 
     def on_train_end(self, *args, **kwargs):
         pass
+
+    def get_episode_metrics(self):
+        metrics = {}
+
+        # Convert from list of dictionaries to dictionary of lists
+        for k in self.episode_metrics[0].keys():
+            metrics[k] = [d[k] for d in self.episode_metrics]
+
+        df = pd.DataFrame(metrics)
+        df['mean_reward'] = pd.rolling_mean(df['total_reward'], window=50, min_periods=0)
+        return df
+
 
 
 class Agent:
