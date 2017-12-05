@@ -3,26 +3,69 @@ import gym.wrappers
 from keras.models import Sequential
 import logging
 import numpy as np
-import pandas as pd
 import random as rnd
 from shutil import rmtree
 from tempfile import mkdtemp
 from EventHandler import EventHandler
+from collections import deque
+from datetime import datetime
 
 # TODO: Change exploration episodes to exploration steps?
 # TODO: Add max steps limit
 # TODO: Report # of steps per episode
 
-class Metrics():
-    pass
+class Monitor(logging.getLoggerClass()):
+    '''Performance monitor that handles logging and metric calculations.'''
+
+    # TODO: Score per episode
+    # TODO: Average error per episode?
+    # TODO: Error per step?
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.episode_metrics = []
+        self.recent_rewards = deque(maxlen=50)
+
+    def on_episode_start(self, *args, **kwargs):
+        self.episode_start_time = datetime.now()
+
+    def on_episode_end(self, *args, **kwargs):
+        self.episode_metrics.append(kwargs)
+
+        self.recent_rewards.append(kwargs['total_reward'])
+        avg_reward = sum(self.recent_rewards) / len(self.recent_rewards)
+
+        episode_duration = datetime.now() - self.episode_start_time
+
+        self.info('Episode {}: \tError: {},\tReward: {} \tMoving Avg Reward:{}\tSteps: {}\tDuration: {}'.format(
+            round(kwargs['episode_count'], 2),
+            round(kwargs['total_error'], 2),
+            round(kwargs['total_reward'], 2),
+            round(avg_reward, 2),
+            kwargs['num_steps'],
+            episode_duration))
+
+    def on_step_start(self, *args, **kwargs):
+        pass
+
+    def on_step_end(self, *args, **kwargs):
+        pass
+
+    def on_train_start(self, *args, **kwargs):
+        pass
+
+    def on_train_end(self, *args, **kwargs):
+        pass
 
 
 class Agent:
-    def __init__(self, env, model, policy, memory, logger=None, api_key=None, seed=None):
+    def __init__(self, env, model, policy, memory, max_steps_per_episode=0, logger=None, api_key=None, seed=None):
         self.env = env
         self.model = model
         self.policy = policy
         self.memory = memory
+        self.max_steps_per_episode = max_steps_per_episode
+
         self.num_actions = env.action_space.n
         if isinstance(env.observation_space, gym.spaces.discrete.Discrete):
             self.num_features = env.observation_space.n
@@ -33,6 +76,7 @@ class Agent:
         if logger:
             self.logger = logger
         else:
+            logging.setLoggerClass(Monitor)
             self.logger = logging.getLogger(__name__)
             self.logger.setLevel(logging.INFO)
 
@@ -61,16 +105,10 @@ class Agent:
             if 'on_train_end' in dir(obs):
                 self.train_end += obs.on_train_end
 
-
         if not seed is None:
             env.seed(seed)
             rnd.seed(seed)
             np.random.seed(seed)
-
-
-    def addHandlers(self, handlers):
-        for handler in handlers:
-            self.logger.addHandler(handler)
 
 
     def preprocess_state(self, s, a, r, s_prime, episode_done):
@@ -82,48 +120,36 @@ class Agent:
 
 
 class DeepQAgent(Agent):
-    pass
+    def __init__(self, gamma=0.9, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
-
-class DoubleDeepQAgent(Agent):
-    def __init__(self, env, model, policy, memory, logger=None, gamma=0.9, api_key=None, seed=None):
-        super().__init__(env, model, policy, memory, logger, api_key, seed)
-
-        self.target_model = Sequential.from_config(self.model.get_config())
         self.gamma = gamma
         self.preprocess_steps = []
 
 
-    def train(self, max_episodes=500, steps_before_training=0, target_model_update=1000, render_every_n=1, upload=False, running_average_len=50):
-        # TODO: Running avg length should be handled by logging/metrics framework
-
+    def train(self, max_episodes=500, steps_before_training=None, target_model_update=1000, render_every_n=1, upload=False, running_average_len=50):
         if upload:
             assert self.api_key, 'An API key must be specified before uploading training results.'
             monitor_path = mkdtemp()
             self.env = gym.wrappers.Monitor(self.env, monitor_path)
 
-        metrics = pd.DataFrame(dict(Error=np.zeros(max_episodes), Reward=np.zeros(max_episodes)))
+        # Unless otherwise specified, assume training doesn't start until a full sample of steps is observed
+        if steps_before_training is None:
+            steps_before_training = self.memory.sample_size
 
         try:
-            step_count = 0
+            total_steps = 0
 
             for episode_count in range(1, max_episodes + 1):
                 self.episode_start(episode_count=episode_count)
 
                 render = episode_count % render_every_n == 0
-                total_reward, total_error, steps = self._run_episode(target_model_update, steps_before_training, step_count, render)
+                total_reward, total_error, steps_in_episode = self._run_episode(target_model_update, steps_before_training, total_steps, render)
 
                 # Fire any notifications
-                self.episode_end(episode_count=episode_count, total_reward=total_reward, total_error=total_error, num_steps=steps)
+                self.episode_end(episode_count=episode_count, total_reward=total_reward, total_error=total_error, num_steps=steps_in_episode)
 
-                step_count += steps
-                metrics.Reward[episode_count] = total_reward
-                metrics.Error[episode_count] = total_error
-
-                start = max(0, episode_count - running_average_len)
-                avg_reward = sum(metrics.Reward[start:episode_count + 1]) / min(episode_count, running_average_len)
-                self.logger.info('Episode {}: \tError: {},\tTotal Reward: {} \tMoving Avg Reward:{}\tBuffer: {}'.format(
-                        episode_count, round(total_error, 2), total_reward, round(avg_reward, 2), len(self.memory)))
+                total_steps += steps_in_episode
 
             self.env.close()
 
@@ -134,13 +160,19 @@ class DoubleDeepQAgent(Agent):
                 gym.upload(monitor_path, api_key=self.api_key)
                 rmtree(monitor_path) # Cleanup the temp dir
 
-        return metrics
+
+class DoubleDeepQAgent(DeepQAgent):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.target_model = Sequential.from_config(self.model.get_config())
+
     
-    
-    def _run_episode(self, target_model_update, steps_before_training, step_count, render):
+    def _run_episode(self, target_model_update, steps_before_training, total_steps, render):
         episode_done = False
         total_reward = 0
         total_error = 0
+        step_count = 0
 
         s = self.env.reset()  # Get initial state observation
         
@@ -150,7 +182,7 @@ class DoubleDeepQAgent(Agent):
                 self.env.render()
             s = np.asarray(s)
 
-            self.step_start(step=step_count, s=s)
+            self.step_start(step=step_count, total_steps=total_steps, s=s)
 
             q_values = self.model.predict_on_batch(s.reshape(1,-1))
             a = self.policy(q_values)
@@ -158,14 +190,19 @@ class DoubleDeepQAgent(Agent):
             s_prime, r, episode_done, _ = self.env.step(a)
 
             step_count += 1
+            total_steps += 1
             total_reward += r  # Track rewards without shaping
 
             s, a, r, s_prime, episode_done = self.preprocess_state(s, a, r, s_prime, episode_done)
 
+            # Force the episode to end if we've reached the maximum number of steps allowed
+            if self.max_steps_per_episode > 0 and step_count >= self.max_steps_per_episode:
+                episode_done = True
+
             self.memory.append((s, a, r, s_prime, episode_done))
 
             # Hard update of the target model every N steps
-            if step_count % target_model_update == 0:
+            if total_steps % target_model_update == 0:
                 self._update_target_model()
 
             # Soft update every step
@@ -173,11 +210,11 @@ class DoubleDeepQAgent(Agent):
                 self._update_target_model(target_model_update)
 
             # Train model weights
-            if step_count > steps_before_training:
+            if total_steps > steps_before_training:
                 error = self._update_weights()
                 total_error += error
 
-            self.step_end(step=step_count, s=s, s_prime=s_prime, a=a, r=r, episode_done=episode_done)
+            self.step_end(step=step_count, total_steps=total_steps, s=s, s_prime=s_prime, a=a, r=r, episode_done=episode_done)
             self.logger.debug("S: {}\tA: {}\tR: {}\tS': {}\tDone: {}".format(s, a, r, s_prime, episode_done))
 
             s = s_prime
