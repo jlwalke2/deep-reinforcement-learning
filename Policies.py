@@ -72,3 +72,12 @@ class EpsilonGreedyPolicy(AbstractPolicy):
             self.epsilon = max(self.epsilon * self.decay, self.min)
 
         self.logger.info('Epsilon: {}'.format(round(self.epsilon, 2)))
+
+
+class GreedyPolicy(EpsilonGreedyPolicy):
+    '''
+    A pure greedy policy that always chooses the action with the highest q-value.
+    '''
+
+    def __init__(self):
+        super().__init__(min=0, max=0, decay=0, exploration_episodes=0)
