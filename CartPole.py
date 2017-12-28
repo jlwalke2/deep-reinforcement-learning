@@ -1,11 +1,11 @@
 import gym
-from Agents import DoubleDeepQAgent
-from Memories import Memory, PrioritizedMemory
-from Policies import EpsilonGreedyPolicy, BoltzmannPolicy
-
-from keras.models import Sequential
 from keras.layers import Dense
+from keras.models import Sequential
 from keras.optimizers import rmsprop
+
+from deeprl.agents.DoubleDeepQAgent import DoubleDeepQAgent
+from Memories import PrioritizedMemory
+from Policies import BoltzmannPolicy
 
 SEED = 123
 
@@ -32,7 +32,6 @@ agent = DoubleDeepQAgent(env=env, model=model, policy=policy, memory=memory, gam
 #agent.policy.logger.setLevel(logging.DEBUG)
 agent.train(target_model_update=1e-2, upload=False, max_episodes=200)
 
-import pandas as pd
 df = agent.logger.get_episode_metrics()
 p = df.plot.line(x='episode_count', y='total_reward')
 p = df.plot.line(x='episode_count', y='mean_reward', ax=p)
