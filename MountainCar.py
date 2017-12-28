@@ -1,11 +1,12 @@
 import gym
-from Agents import DoubleDeepQAgent
-from Memories import Memory
-from Policies import EpsilonGreedyPolicy
-
-from keras.models import Sequential
+import numpy as np
 from keras.layers import Dense
-from keras.optimizers import rmsprop
+from keras.models import Sequential
+from keras.optimizers import adam
+
+from deeprl.agents.DoubleDeepQAgent import DoubleDeepQAgent
+from Memories import PrioritizedMemory
+from Policies import EpsilonGreedyPolicy
 
 SEED = 123
 
@@ -19,12 +20,30 @@ model.add(Dense(16, input_dim=num_features, activation='relu'))
 model.add(Dense(16, activation='relu'))
 model.add(Dense(16, activation='relu'))
 model.add(Dense(units=num_actions, activation='linear'))
-model.compile(loss='mse', optimizer=rmsprop(lr=1e-3))
+model.compile(loss='mse', optimizer=adam())
 print(model.summary())
 
-memory = Memory(50000)
-policy = EpsilonGreedyPolicy(min=0.05, decay=0.99)
+def shape_reward(*args):
+    # state is (position, velocity)
+    s, a, r, s_prime, done = args
+    def potential(state):
+        return 1. if np.all(state > 0) or np.all(state < 0) else 0
 
-agent = DoubleDeepQAgent(env, model, policy, memory, gamma=0.99, seed=SEED)
+    r = r + 0.99*potential(s_prime) - potential(s)
 
-agent.train(target_model_update=1e-2, upload=False, max_episodes=200)
+    return args
+
+
+memory = PrioritizedMemory(50000)
+policy = EpsilonGreedyPolicy(min=0.05, max=0.5, decay=0.999)
+#policy = BoltzmannPolicy()
+agent = DoubleDeepQAgent(env=env, model=model, policy=policy, memory=memory, gamma=0.99, max_steps_per_episode=1000, seed=SEED)
+agent.preprocess_state = shape_reward
+
+agent.train(target_model_update=1e-2, upload=False, max_episodes=1000, render_every_n=10)
+
+df = agent.logger.get_episode_metrics()
+p = df.plot.line(x='episode_count', y='total_reward')
+p = df.plot.line(x='episode_count', y='mean_reward', ax=p)
+p.figure.show()
+pass
