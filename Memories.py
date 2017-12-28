@@ -2,8 +2,16 @@ import numpy as np
 
 
 class Memory():
-    '''Represents an experience replay buffer as a Numpy array'''
+    '''Experience replay buffer for reinforcement learning.
+
+    Stores experiences in a Numpy array and allows uniform random sampling of the experiences.
+    '''
     def __init__(self, maxlen=1000, sample_size=32):
+        '''
+
+        :param maxlen: Maximum number of experiences to store
+        :param sample_size: Number of experiences to sample unless otherwise specified
+        '''
         self.buffer = None                  # Lazy initialization since we don't know # of columns
         self.max_len = maxlen
         self.is_full = False
@@ -11,7 +19,11 @@ class Memory():
         self.sample_size = sample_size
 
     def append(self, x):
-
+        '''
+        Add a new experience to the memory
+        :param x: List of: s, a, r, s' done
+        :return: None
+        '''
         elements = [np.asarray(x[i]).flatten() for i in range(len(x))]
         row = np.hstack(elements)
         row = row.reshape(1, -1)
@@ -30,6 +42,14 @@ class Memory():
 
 
     def sample(self, n=0):
+        '''
+        Returns a random sample of previously observed experiences.
+        Sampling is done with replacement only if the number of samples to be drawn exceeds
+        the number of experiences curently in the memory.
+
+        :param n: Number of experiences to sample
+        :return: Numpy arrays: s, a, r, s', done
+        '''
         if not n:
             n = self.sample_size
         oversample = n > len(self)
@@ -55,14 +75,40 @@ class Memory():
             return self.index
 
 
+class TrajectoryMemory(Memory):
+    '''
+    Experience reply buffer designed to hold the samples for a single trajectory.
+    All experiences are returned, in order, instead of randomly sampled.
+    '''
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        self.sample_size = self.max_len
+
+    def sample(self):
+        states = self.buffer[:, 0:self._field_splits[0]]
+        actions = self.buffer[:, self._field_splits[0]:self._field_splits[1]]
+        rewards = self.buffer[:, self._field_splits[1]:self._field_splits[2]]
+        s_primes = self.buffer[:, self._field_splits[2]:self._field_splits[3]]
+        flags = self.buffer[:, self._field_splits[3]:].astype('bool_')
+
+        # Overwrite existing rows with new rows instead of re-initializing buffer
+        self.index = 0
+
+        return states, actions, rewards, s_primes, flags
+
+
+
+
+
 class PrioritizedMemory(Memory):
     '''
     Memory buffer implementing Prioritized Experience Replay
 
     See https://arxiv.org/pdf/1511.05952.pdf
     '''
-    def __init__(self, maxlen=1000, sample_size=32, alpha=0.6):
-        super().__init__(maxlen, sample_size)
+    def __init__(self, alpha=0.6, **kwargs):
+        super().__init__(**kwargs)
 
         self.alpha = alpha
         self.beta = 1.0
