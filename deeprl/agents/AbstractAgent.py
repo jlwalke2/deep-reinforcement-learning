@@ -12,7 +12,6 @@ from ..utils.Monitor import Monitor
 
 from EventHandler import EventHandler
 
-# TODO: Buffer Memory - for replay of whole trajectories (in order)
 # TODO: Add methods for training start/stop, episode start/stop, etc
 # TODO: Change exploration episodes to exploration steps?
 # TODO: Implement frameskip / action replay
