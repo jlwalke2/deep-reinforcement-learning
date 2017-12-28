@@ -6,7 +6,7 @@ from keras.models import Sequential, Model
 from keras.optimizers import rmsprop
 
 from Memories import PrioritizedMemory
-from Policies import EpsilonGreedyPolicy
+from policies import EpsilonGreedyPolicy
 
 
 env = gym.make('LunarLander-v2')

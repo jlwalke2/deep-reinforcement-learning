@@ -5,7 +5,7 @@ from keras.optimizers import rmsprop
 
 from deeprl.agents.DoubleDeepQAgent import DoubleDeepQAgent
 from Memories import PrioritizedMemory
-from Policies import BoltzmannPolicy
+from policies import BoltzmannPolicy
 
 SEED = 123
 

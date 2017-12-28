@@ -6,7 +6,7 @@ from keras.optimizers import adam
 
 from deeprl.agents.DoubleDeepQAgent import DoubleDeepQAgent
 from Memories import PrioritizedMemory
-from Policies import EpsilonGreedyPolicy
+from policies import EpsilonGreedyPolicy
 
 SEED = 123
 
