@@ -50,4 +50,25 @@ class Test(unittest.TestCase):
         y_pred3 = model_neg.predict(x)
         self.assertGreater(abs(y_actual - y_pred3), abs(y_actual - y_pred1))
 
+    def test_function(self):
+        # Define loss tensor?
+        # Define weight tensors?
+        # Compute gradient of loss wrt weights
+        # Name scopes?
+
+        '''
+
+        log(a | s) * (R - V)
+        # Inputs:  states, action mask, returns, values
+        # Outputs: loss?
+        # Updates: gradient
+
+        Compute objective function
+        Compute gradient of weights wrt objective
+        update weights
+        '''
+
+
+        pass
+
 
