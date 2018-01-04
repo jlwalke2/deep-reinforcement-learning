@@ -34,7 +34,7 @@ def shape_reward(*args):
     return args
 
 
-memory = PrioritizedMemory(50000)
+memory = PrioritizedMemory(maxlen=50000)
 policy = EpsilonGreedyPolicy(min=0.05, max=0.5, decay=0.999)
 #policy = BoltzmannPolicy()
 agent = DoubleDeepQAgent(env=env, model=model, policy=policy, memory=memory, gamma=0.99, max_steps_per_episode=1000, seed=SEED)

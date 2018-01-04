@@ -22,7 +22,7 @@ model.add(Dense(units=num_actions, activation='linear'))
 model.compile(loss='mse', optimizer=rmsprop(lr=1e-3))
 print(model.summary())
 
-memory = PrioritizedMemory(50000)
+memory = PrioritizedMemory(maxlen=50000)
 policy = BoltzmannPolicy()
 
 

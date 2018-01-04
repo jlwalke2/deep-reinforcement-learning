@@ -106,14 +106,20 @@ class PrioritizedMemory(Memory):
     '''
     Memory buffer implementing Prioritized Experience Replay
 
-    See https://arxiv.org/pdf/1511.05952.pdf
+    See Prioritized Experience Replay paper by Schaul et. al. [https://arxiv.org/pdf/1511.05952.pdf]
     '''
     def __init__(self, alpha=0.6, **kwargs):
+        '''
+
+        :param alpha: Value between 0 and 1 indicating how greedy the prioritization is, with 0 being uniform random sampling
+        :param kwargs:
+        '''
         super().__init__(**kwargs)
+        assert alpha >= 0 and alpha <= 1, 'Alpha value of {} is not between 0 and 1.'.format(alpha)
 
         self.alpha = alpha
         self.beta = 1.0
-        self.epsilon = 1.0
+        self.epsilon = 1e-4             # Small value added to error to avoid division by zero
         self.last_sample = None
 
     def append(self, x):
@@ -147,9 +153,9 @@ class PrioritizedMemory(Memory):
             assert self.last_sample is not None
 
             self.buffer[self.last_sample, -1] = np.abs(kwargs['delta'])
-            pass
 
     def on_calculate_error(self, *args, **kwargs):
+
         delta = kwargs['target'] - kwargs['estimate']
         p = delta.sum(axis=-1) # Sum along rows since q-values only differ for the action taken
         p = np.power(np.abs(p) + self.epsilon, self.alpha)
@@ -161,4 +167,4 @@ class PrioritizedMemory(Memory):
         # Element wise multiplication works since delta is 0 for any action not taken
         # Reshape to allow broadcasting across delta matrix
         kwargs['target'][:, :] = kwargs['estimate'] + delta * w.reshape((-1, 1))
-        pass
+
