@@ -30,7 +30,7 @@ critic = Model(inputs=[state_in, action_in], outputs=[q_out])
 critic.compile(loss='mse', optimizer=rmsprop(lr=0.0016, decay=0.000001))
 
 
-memory = PrioritizedMemory(50000, sample_size=32)
+memory = PrioritizedMemory(maxlen=50000, sample_size=32)
 policy = EpsilonGreedyPolicy(min=0.025, decay=0.96, exploration_episodes=1)
 
 agent = ActorCriticAgent(env=env, actor=actor, critic=critic, policy=policy, memory=memory, max_steps_per_episode=500)
