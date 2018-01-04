@@ -86,11 +86,12 @@ class TrajectoryMemory(Memory):
         self.sample_size = self.max_len
 
     def sample(self):
-        states = self.buffer[:, 0:self._field_splits[0]]
-        actions = self.buffer[:, self._field_splits[0]:self._field_splits[1]]
-        rewards = self.buffer[:, self._field_splits[1]:self._field_splits[2]]
-        s_primes = self.buffer[:, self._field_splits[2]:self._field_splits[3]]
-        flags = self.buffer[:, self._field_splits[3]:].astype('bool_')
+        i = len(self)
+        states = self.buffer[:i, 0:self._field_splits[0]]
+        actions = self.buffer[:i, self._field_splits[0]:self._field_splits[1]]
+        rewards = self.buffer[:i, self._field_splits[1]:self._field_splits[2]]
+        s_primes = self.buffer[:i, self._field_splits[2]:self._field_splits[3]]
+        flags = self.buffer[:i, self._field_splits[3]:].astype('bool_')
 
         # Overwrite existing rows with new rows instead of re-initializing buffer
         self.index = 0
