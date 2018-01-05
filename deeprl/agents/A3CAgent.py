@@ -5,9 +5,63 @@ import gym
 import multiprocessing
 from multiprocessing import Process
 import numpy as np
+import keras.backend as K
+import keras.models
 
-def worker(config, actor, critic):
-    def build_model(shared_model, loss):
+def run_worker(config, actor, critic):
+    worker = A3CWorker(config, actor, critic)
+    worker.train()
+
+
+class A3CWorker():
+    # TODO: Implement shared logger
+    # TODO: Pass gamma in config
+
+    def __init__(self, shared_config, shared_actor, shared_critic):
+        assert 'env' in shared_config, 'Configuration missing key "env".'
+
+        self.config = shared_config
+        self.env = gym.make(self.config['env'])
+        self.local_actor = self._build_model(shared_actor, lambda y_true, y_pred: y_pred)
+        self.local_critic = self._build_model(shared_critic, 'mse')
+        self.shared_actor = shared_actor
+        self.shared_critic = shared_critic
+
+        self.local_actor.train_on_batch = self._build_train_func(self._get_train_function(self.local_actor))
+
+        print(multiprocessing.current_process().name)
+
+
+    def _build_train_func(self, f):
+        '''
+        # Define loss tensor?
+        # Define weight tensors?
+        # Compute gradient of loss wrt weights
+        # Name scopes?
+
+        log(a | s) * (R - V)
+        # Inputs:  states, action mask, returns, values
+        # Outputs: loss?
+        # Updates: gradient
+
+        Compute objective function
+        Compute gradient of weights wrt objective
+        update weights
+        '''
+
+        def wrapper(y_true, y_pred, mask, advantage):
+            # Zero out values for all actions except the one taken
+            y_pred = K.print_tensor(y_pred * mask, 'Masked actions')
+            t1 = K.log(y_pred)
+            t2 = t1 * advantage
+
+            # log(action) * (R-V)
+            loss = f(y_true, t2)    # Assumes loss function just returns y_pred as the loss
+            return loss
+        return wrapper
+
+
+    def _build_model(self, shared_model, loss):
         t, c = shared_model.get_model()
         local_model = t.from_config(c)
 
@@ -15,82 +69,94 @@ def worker(config, actor, critic):
         optimizer = t.from_config(c)
 
         local_model.compile(optimizer, loss=loss)
-
         return local_model
 
-    env = gym.make(config['env'])
-    # TODO: pass loss function
-    # TODO: Implement shared logger
-    # TODO: Pass gamma
-    print(multiprocessing.current_process().name)
+    def _get_train_function(self, model):
+        if isinstance(model, keras.models.Sequential):
+            model = model.model # Sequential wraps an internal Model object
 
-    local_actor = build_model(actor, 'mse')
-    local_critic = build_model(critic, 'mse')
+        # Force Keras to construct its standard training function
+        model._make_train_function()
 
-    # TODO: pull from config
-    max_episodes = 5
-    train_interval = 5
-    max_steps = 50
-    gamma = 0.9
-    memory = TrajectoryMemory(maxlen=train_interval)
-
-    # Construct an upper triangular matrix where each diagonal 0..k = the discount factor raised to that power
-    # Once constructed, the n-step return can be computed as Gr where G is the matrix of discount factors
-    # and r is the vector of rewards observed at each time step
-    G = sum([np.diagflat(np.ones(train_interval - i) * gamma**i, k=i) for i in range(train_interval)])
+        # Return the function
+        return model.train_function
 
 
-    for episode in range(max_episodes):
-        orig_actor_weights = actor.get_weights() # Refresh local copies of weights
-        orig_critic_weights = critic.get_weights()
-        local_actor.set_weights(orig_actor_weights)
-        local_critic.set_weights(orig_critic_weights)
+    def choose_action(self, state):
+        # Actor network returns probability of choosing each action in current state
+        actions = self.local_actor.predict_on_batch(state)
+
+        # Select the action to take
+        return np.random.choice(np.arange(actions.size), p=actions.ravel())
+
+    def train(self):
+        max_episodes = 5
+        train_interval = 5
+        max_steps = 50
+        gamma = 0.9
+        memory = TrajectoryMemory(maxlen=train_interval)
+
+        # Construct an upper triangular matrix where each diagonal 0..k = the discount factor raised to that power
+        # Once constructed, the n-step return can be computed as Gr where G is the matrix of discount factors
+        # and r is the vector of rewards observed at each time step
+        G = sum([np.diagflat(np.ones(train_interval - i) * gamma ** i, k=i) for i in range(train_interval)])
 
         for episode in range(max_episodes):
-            done = False
-            step = 0
-            s = env.reset()
+            orig_actor_weights = self.shared_actor.get_weights()  # Refresh local copies of weights
+            orig_critic_weights = self.shared_critic.get_weights()
+            self.local_actor.set_weights(orig_actor_weights)
+            self.local_critic.set_weights(orig_critic_weights)
 
-            while not done:
-                # TODO: select action
-                step += 1
-                a = 0
-                s_prime, r, done, _ = env.step(a)
+            for episode in range(max_episodes):
+                done = False
+                step = 0
+                s = self.env.reset()
 
-                # Store experience
-                memory.append((s, a, r, s_prime, done))
-                s = s_prime
+                while not done:
+                    step += 1
+                    a = self.choose_action(s)
+                    s_prime, r, done, _ = self.env.step(a)
 
-                # Terminate loop anyways if max steps reached.
-                # Episode not marked as terminal so V(s') estimate will be used
-                if step == max_steps:
-                    done = True
+                    # Store experience
+                    memory.append((s, a, r, s_prime, done))
+                    s = s_prime
 
-                if done or step % train_interval == 0:
-                    states, actions, rewards, s_primes, flags = memory.sample()
+                    # Terminate loop anyways if max steps reached.
+                    # Episode not marked as terminal so V(s') estimate will be used
+                    if step == max_steps:
+                        done = True
 
-                    # Total n-step return from each state
-                    R = np.dot(G, rewards)
+                    if done or step % train_interval == 0:
+                        states, actions, rewards, s_primes, flags = memory.sample()
 
-                    # If final state was terminate than it's value is 0.
-                    # Otherwise, we must include the discounted value of the last state observed.
-                    # Discount factor for V(s') is gamma * discount for last reward observed before s'.
-                    if flags[-1] == False:
-                        terminal_val = local_critic.predict(s_primes[-1, :].reshape((1, -1)))
-                        R += (G[:,-1] * gamma * terminal_val).reshape(R.shape)
+                        # Total n-step return from each state
+                        R = np.dot(G, rewards)
 
-                    error = local_critic.train_on_batch(states[:-1, :], R[:-1])
-                    print('{} | step = {},  error = {}'.format(multiprocessing.current_process().name, step, error))
-                    critic_delta = [new - old for new, old in zip(local_critic.get_weights(), orig_critic_weights)]
-                    orig_critic_weights = critic.add_delta(critic_delta) # Add deltas and get updated weights
-                    local_critic.set_weights(orig_critic_weights)        # Update the model with new weights
-                    # TODO: Send deltas
+                        # If final state was terminate than it's value is 0.
+                        # Otherwise, we must include the discounted value of the last state observed.
+                        # Discount factor for V(s') is gamma * discount for last reward observed before s'.
+                        if flags[-1] == False:
+                            terminal_val = self.local_critic.predict(s_primes[-1, :].reshape((1, -1)))
+                            R += (G[:, -1] * gamma * terminal_val).reshape(R.shape)
+
+#                        actor_err = self.local_actor.
+                        critic_err = self.local_critic.train_on_batch(states[:-1, :], R[:-1])
 
 
-        # TODO: Update weight diffs
-        pass
-        # compute gradient
-        # update dict
+                        print('{} | step = {},  error = {}'.format(multiprocessing.current_process().name, step, critic_err))
+                        critic_delta = [new - old for new, old in zip(self.local_critic.get_weights(), orig_critic_weights)]
+                        orig_critic_weights = self.shared_critic.add_delta(critic_delta)  # Add deltas and get updated weights
+                        self.local_critic.set_weights(orig_critic_weights)  # Update the model with new weights
+                        # TODO: Send deltas
+
+            # TODO: Update weight diffs
+            pass
+            # compute gradient
+            # update dict
+
+
+
+
 
 
 
@@ -139,7 +205,7 @@ class A3CAgent(AbstractAgent):
         config['env'] = self.env.spec.id
         config['gamma'] = 0.99 # TODO: pass in constructor
 
-        processes = [Process(target=worker, args=(config, actor, critic)) for _ in range(num_threads)]
+        processes = [Process(target=run_worker, args=(config, actor, critic)) for _ in range(num_threads)]
 
         for p in processes:
             p.start()
