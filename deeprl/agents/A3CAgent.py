@@ -8,8 +8,8 @@ import numpy as np
 import keras.backend as K
 import keras.models
 
-def run_worker(config, actor, critic):
-    worker = A3CWorker(config, actor, critic)
+def run_worker(id, config, actor, critic):
+    worker = A3CWorker(id, config, actor, critic)
     worker.train()
 
 
@@ -17,49 +17,41 @@ class A3CWorker():
     # TODO: Implement shared logger
     # TODO: Pass gamma in config
 
-    def __init__(self, shared_config, shared_actor, shared_critic):
+    def __init__(self, id, shared_config, shared_actor, shared_critic):
         assert 'env' in shared_config, 'Configuration missing key "env".'
 
+        self.id = id
+        self.name = multiprocessing.current_process().name
         self.config = shared_config
         self.env = gym.make(self.config['env'])
         self.local_actor = self._build_model(shared_actor, lambda y_true, y_pred: y_pred)
         self.local_critic = self._build_model(shared_critic, 'mse')
         self.shared_actor = shared_actor
         self.shared_critic = shared_critic
+        self.num_actions = self.env.action_space.n
+        self.train_actor_on_batch = self._build_actor_train_func(self.local_actor)
 
-        self.local_actor.train_on_batch = self._build_train_func(self._get_train_function(self.local_actor))
-
-        print(multiprocessing.current_process().name)
+        print(self.name)
 
 
-    def _build_train_func(self, f):
-        '''
-        # Define loss tensor?
-        # Define weight tensors?
-        # Compute gradient of loss wrt weights
-        # Name scopes?
+    def _build_actor_train_func(self, model):
+        if isinstance(model, keras.models.Sequential):
+            model = model.model  # Unwrap internal Model from Sequential object
 
-        log(a | s) * (R - V)
-        # Inputs:  states, action mask, returns, values
-        # Outputs: loss?
-        # Updates: gradient
+        # Define a custom objective function to maximize
+        def objective(action, mask, advantage):
+            # Since Keras optimizers always minimize "loss" we'll have to minimize the negative of the objective
+            return -(K.sum(K.log(action) * mask, axis=-1) * advantage)
 
-        Compute objective function
-        Compute gradient of weights wrt objective
-        update weights
-        '''
+        mask = K.placeholder(shape=model.output.shape, name='mask')
+        advantage = K.placeholder(shape=(None,1), name='advantage')
+        loss = objective(model.output, mask, advantage) # Compute objective/loss tensor
 
-        def wrapper(y_true, y_pred, mask, advantage):
-            # Zero out values for all actions except the one taken
-            y_pred = K.print_tensor(y_pred * mask, 'Masked actions')
-            t1 = K.log(y_pred)
-            t2 = t1 * advantage
-
-            # log(action) * (R-V)
-            loss = f(y_true, t2)    # Assumes loss function just returns y_pred as the loss
-            return loss
-        return wrapper
-
+        # Build a Keras function to run in the inputs through the model, return the outputs, and perform the
+        # (weight) updates created by the optimizer
+        return K.function(inputs=model._feed_inputs + [mask, advantage],
+                   outputs=[loss],
+                   updates=model.optimizer.get_updates(params=model._collected_trainable_weights, loss=loss))
 
     def _build_model(self, shared_model, loss):
         t, c = shared_model.get_model()
@@ -71,17 +63,6 @@ class A3CWorker():
         local_model.compile(optimizer, loss=loss)
         return local_model
 
-    def _get_train_function(self, model):
-        if isinstance(model, keras.models.Sequential):
-            model = model.model # Sequential wraps an internal Model object
-
-        # Force Keras to construct its standard training function
-        model._make_train_function()
-
-        # Return the function
-        return model.train_function
-
-
     def choose_action(self, state):
         # Actor network returns probability of choosing each action in current state
         actions = self.local_actor.predict_on_batch(state)
@@ -90,10 +71,10 @@ class A3CWorker():
         return np.random.choice(np.arange(actions.size), p=actions.ravel())
 
     def train(self):
-        max_episodes = 5
+        max_episodes = self.config['max_episodes']
         train_interval = 5
-        max_steps = 50
-        gamma = 0.9
+        max_steps = self.config['max_steps_per_episode']
+        gamma = self.config['gamma']
         memory = TrajectoryMemory(maxlen=train_interval)
 
         # Construct an upper triangular matrix where each diagonal 0..k = the discount factor raised to that power
@@ -113,8 +94,10 @@ class A3CWorker():
                 s = self.env.reset()
 
                 while not done:
+                    if self.id == 0 and episode % 25 == 0:
+                        self.env.render()
                     step += 1
-                    a = self.choose_action(s)
+                    a = self.choose_action(s.reshape(1, -1))
                     s_prime, r, done, _ = self.env.step(a)
 
                     # Store experience
@@ -128,6 +111,7 @@ class A3CWorker():
 
                     if done or step % train_interval == 0:
                         states, actions, rewards, s_primes, flags = memory.sample()
+                        batch_size = states.shape[0]
 
                         # Total n-step return from each state
                         R = np.dot(G, rewards)
@@ -139,21 +123,27 @@ class A3CWorker():
                             terminal_val = self.local_critic.predict(s_primes[-1, :].reshape((1, -1)))
                             R += (G[:, -1] * gamma * terminal_val).reshape(R.shape)
 
-#                        actor_err = self.local_actor.
+
+                        # Train the actor network
+                        mask = np.zeros((batch_size, self.num_actions))
+                        mask[range(batch_size), actions.astype('int32').ravel()] = 1
+                        V = self.local_critic.predict_on_batch(states)
+                        advantage = R - V
+                        actor_err = self.train_actor_on_batch([states, mask, advantage])
+
+                        # Train the critic network
                         critic_err = self.local_critic.train_on_batch(states[:-1, :], R[:-1])
 
+                        print('{} | episode = {},  step = {},  actor error = {},  critic error = {}'.format(multiprocessing.current_process().name, episode, step, '', critic_err))
 
-                        print('{} | step = {},  error = {}'.format(multiprocessing.current_process().name, step, critic_err))
+                        # Update the shared model weights and refresh local weights
+                        actor_delta = [new - old for new, old in zip(self.local_actor.get_weights(), orig_actor_weights)]
+                        orig_actor_weights = self.shared_actor.add_delta(actor_delta)
+                        self.local_actor.set_weights(orig_actor_weights)
+
                         critic_delta = [new - old for new, old in zip(self.local_critic.get_weights(), orig_critic_weights)]
                         orig_critic_weights = self.shared_critic.add_delta(critic_delta)  # Add deltas and get updated weights
                         self.local_critic.set_weights(orig_critic_weights)  # Update the model with new weights
-                        # TODO: Send deltas
-
-            # TODO: Update weight diffs
-            pass
-            # compute gradient
-            # update dict
-
 
 
 
@@ -170,9 +160,6 @@ class A3CAgent(AbstractAgent):
 
         self.actor = actor
         self.critic = critic
-        pass
-        # Memory??
-        # setup shared weights
 
     def _build_shared_model(self, model, manager):
 
@@ -183,18 +170,8 @@ class A3CAgent(AbstractAgent):
                                    weights=model.get_weights())
 
 
-    def train(self, max_steps, num_threads, **kwargs):
+    def train(self, max_episodes, num_threads, **kwargs):
         """Train the agent in the environment for a specified number of episodes."""
-        # self._target_model_update = target_model_update
-        # self.step_end += self._update_model_weights
-        # self.step_end += self._update_target_weights
-        #
-        # # Run the training loop
-        # super().train(**kwargs)
-
-        #manager = ModelManager()
-        #manager.start()
-
         manager = ModelManager()
         manager.start()
 
@@ -204,34 +181,13 @@ class A3CAgent(AbstractAgent):
         config = manager.dict()
         config['env'] = self.env.spec.id
         config['gamma'] = 0.99 # TODO: pass in constructor
+        config['max_episodes'] = max_episodes
+        config['max_steps_per_episode'] = self.max_steps_per_episode
 
-        processes = [Process(target=run_worker, args=(config, actor, critic)) for _ in range(num_threads)]
+        processes = [Process(target=run_worker, args=(i, config, actor, critic), name='Worker %s' % i) for i in range(num_threads)]
 
         for p in processes:
             p.start()
 
         for p in processes:
             p.join()
-
-        # Copy env
-        # Initialize Memory
-        # Copy weights
-        # Run episode,
-
-
-'''
-Create jobs w/: env spec & model spec(s) & logger?
-Each job:
-    create env
-    create memory
-    duplicate model(s)
-    request weights
-    until done or terminated:
-        run episode
-        compute weight updates
-        send updates
-        get new weights
-
-'''
-# Weight Handler
-# Manager class
