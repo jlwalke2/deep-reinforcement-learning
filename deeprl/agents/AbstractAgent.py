@@ -8,7 +8,7 @@ import random as rnd
 from shutil import rmtree
 from tempfile import mkdtemp
 from keras.models import Model, Sequential
-from ..utils.Monitor import Monitor
+from ..utils.monitor import Monitor
 
 from EventHandler import EventHandler
 

@@ -1,4 +1,5 @@
 from multiprocessing.managers import SyncManager
+from .monitor import Monitor
 
 class SharedModel():
     def __init__(self, model_type, model_config, optimizer_type, optimizer_config, weights):
@@ -26,3 +27,4 @@ class ModelManager(SyncManager):
     pass
 
 ModelManager.register('Model', SharedModel)
+ModelManager.register('Monitor', Monitor)

@@ -53,10 +53,13 @@ class Monitor(logging.getLoggerClass()):
         metrics = {}
 
         # Convert from list of dictionaries to dictionary of lists
-        for k in self.episode_metrics[0].keys():
-            metrics[k] = [d[k] for d in self.episode_metrics]
+        if self.episode_metrics:
+            for k in self.episode_metrics[0].keys():
+                metrics[k] = [d[k] for d in self.episode_metrics]
 
         df = pd.DataFrame(metrics)
-        df['mean_reward'] = pd.rolling_mean(df['total_reward'], window=50, min_periods=0)
+        if 'total_reward' in df.columns:
+            df['mean_reward'] = pd.rolling_mean(df['total_reward'], window=50, min_periods=0)
+
         return df
 
