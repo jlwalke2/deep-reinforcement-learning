@@ -4,11 +4,10 @@ from datetime import datetime
 import pandas as pd
 
 
-class Monitor(logging.getLoggerClass()):
+class Monitor(object):
     '''Performance monitor that handles logging and metric calculations.'''
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self):
         self.episode_metrics = []
         self.recent_rewards = deque(maxlen=100)
         self.episode_start_time = None
@@ -52,10 +51,11 @@ class Monitor(logging.getLoggerClass()):
     def get_episode_metrics(self):
         metrics = {}
 
+        if len(self.episode_metrics) == 0: return pd.DataFrame(metrics)
+
         # Convert from list of dictionaries to dictionary of lists
-        if self.episode_metrics:
-            for k in self.episode_metrics[0].keys():
-                metrics[k] = [d[k] for d in self.episode_metrics]
+        for k in self.episode_metrics[0].keys():
+            metrics[k] = [d[k] for d in self.episode_metrics]
 
         df = pd.DataFrame(metrics)
         if 'total_reward' in df.columns:

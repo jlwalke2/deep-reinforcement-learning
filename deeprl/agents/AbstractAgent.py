@@ -19,7 +19,7 @@ from EventHandler import EventHandler
 
 
 class AbstractAgent:
-    def __init__(self, env, model, policy=None, memory=None, max_steps_per_episode=0, logger=None, api_key=None, seed=None):
+    def __init__(self, env, model, policy=None, memory=None, max_steps_per_episode=0, logger=None, callbacks=[], api_key=None, seed=None):
         self.env = env
         self.policy = policy
         self.model = model
@@ -40,12 +40,18 @@ class AbstractAgent:
         if logger:
             self.logger = logger
         else:
-            logging.setLoggerClass(Monitor)
             self.logger = logging.getLogger(__name__)
             self.logger.setLevel(logging.INFO)
 
         # TODO:  Add easy way to turn on/off logging from different components
 #        self.logger.parent.handlers[0].addFilter(logging.Filter('root.' + __name__))
+
+        metrics = [o for o in callbacks if isinstance(o, Monitor)]
+        if len(metrics) == 0:
+            self.metrics = Monitor()
+            callbacks.append(self.metrics)
+        else:
+            self.metrics = metrics[0]
 
         self.episode_start = EventHandler()
         self.episode_end = EventHandler()
@@ -64,7 +70,7 @@ class AbstractAgent:
 
             if handler in dir(self):
                 handler = getattr(self, handler)
-                for observer in [self.policy, self.memory, self.logger]:
+                for observer in [self.policy, self.memory, self.logger] + callbacks:
                     if event in dir(observer):
                         handler += getattr(observer, event)
 
