@@ -8,9 +8,16 @@ from matplotlib import animation
 def animated_plot(func, columns, interval=1000):
     fig = plt.figure()
     axis = fig.add_subplot(1, 1, 1)
+    data = None
+    # save last record?
+    # save len of existing data
+    # hcat and plot
 
     def animate(i):
-        data = func()
+        if data is None:
+            data = func()
+        else:
+            data.append(func(start=len(data)))
 
         if data.shape[0] > 0:
             axis.clear()
@@ -25,6 +32,7 @@ def animated_plot(func, columns, interval=1000):
 class Monitor(object):
     '''Performance monitor that handles logging and metric calculations.'''
 
+    # TODO: Add optional checkpointing to a file
     def __init__(self, window_size=100):
         self.episode_metrics = None
         self.recent_rewards = deque(maxlen=window_size)
@@ -34,6 +42,7 @@ class Monitor(object):
         # Save start time so we can calculate episode duration later
         self.episode_start_time = datetime.now()
 
+    # TODO: rolling metrics inaccurate if multiple agents running
     def compute_metrics(self, **kwargs):
         if kwargs.get('total_reward', None):
             self.recent_rewards.append(kwargs['total_reward'])
@@ -58,8 +67,11 @@ class Monitor(object):
         self.episode_metrics.append(episode(**metrics))
 
 
-    def get_episode_metrics(self):
-        return pd.DataFrame(self.episode_metrics)
+    def get_episode_metrics(self, start=0, end=None):
+        assert end is None or end > start, 'Start record must occur before end record.'
+
+        end = end or len(self.episode_metrics)
+        return pd.DataFrame(self.episode_metrics[start:end])
 
 
     def get_episode_plot(self, columns, interval=1000):
@@ -78,3 +90,7 @@ class Monitor(object):
 
         anim = animation.FuncAnimation(fig, animate, interval=interval)
         return plt, anim
+
+    def save(self, filename):
+        df = self.get_episode_metrics()
+        df.to_csv(filename, index=False)
