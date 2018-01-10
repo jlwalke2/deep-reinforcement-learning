@@ -1,65 +1,80 @@
-import logging
-from collections import deque
+from collections import deque, namedtuple
 from datetime import datetime
 import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib import animation
 
+
+def animated_plot(func, columns, interval=1000):
+    fig = plt.figure()
+    axis = fig.add_subplot(1, 1, 1)
+
+    def animate(i):
+        data = func()
+
+        if data.shape[0] > 0:
+            axis.clear()
+            for col in columns:
+                axis.plot(data[col])
+
+        return axis
+
+    anim = animation.FuncAnimation(fig, animate, interval=interval)
+    return plt, anim
 
 class Monitor(object):
     '''Performance monitor that handles logging and metric calculations.'''
 
-    def __init__(self):
-        self.episode_metrics = []
-        self.recent_rewards = deque(maxlen=100)
+    def __init__(self, window_size=100):
+        self.episode_metrics = None
+        self.recent_rewards = deque(maxlen=window_size)
         self.episode_start_time = None
 
     def on_episode_start(self, *args, **kwargs):
         # Save start time so we can calculate episode duration later
         self.episode_start_time = datetime.now()
 
-    def on_episode_end(self, *args, **kwargs):
-        self.episode_metrics.append(kwargs)
-
-        self.recent_rewards.append(kwargs['total_reward'])
-        avg_reward = sum(self.recent_rewards) / len(self.recent_rewards)
+    def compute_metrics(self, **kwargs):
+        if kwargs.get('total_reward', None):
+            self.recent_rewards.append(kwargs['total_reward'])
+            kwargs['avg_reward'] = avg_reward = sum(self.recent_rewards) / len(self.recent_rewards)
 
         if self.episode_start_time:
-            episode_duration = datetime.now() - self.episode_start_time
-        else:
-            self.warning('Episode Start Time is unknown.  Has on_episode_start been called?')
-            episode_duration = 0
+            kwargs['episode_duration'] = datetime.now() - self.episode_start_time
 
-        self.info('Episode {}: \tError: {},\tReward: {} \tMoving Avg Reward:{}\tSteps: {}\tDuration: {}'.format(
-            round(kwargs['episode_count'], 2),
-            round(kwargs['total_error'], 2),
-            round(kwargs['total_reward'], 2),
-            round(avg_reward, 2),
-            kwargs['num_steps'],
-            episode_duration))
+        return kwargs
 
-    def on_step_start(self, *args, **kwargs):
-        pass
+    def on_episode_end(self, **kwargs):
+        # Suppliment with additional computed metrics
+        metrics = self.compute_metrics(**kwargs)
 
-    def on_step_end(self, *args, **kwargs):
-        pass
+        # Create a named tuple to match the fields if not already done
+        if self.episode_metrics is None:
+            self.episode_metrics = []
+            global episode
+            episode = namedtuple('Episode', metrics.keys())
 
-    def on_train_start(self, *args, **kwargs):
-        pass
+        # Store the metrics
+        self.episode_metrics.append(episode(**metrics))
 
-    def on_train_end(self, *args, **kwargs):
-        pass
 
     def get_episode_metrics(self):
-        metrics = {}
+        return pd.DataFrame(self.episode_metrics)
 
-        if len(self.episode_metrics) == 0: return pd.DataFrame(metrics)
 
-        # Convert from list of dictionaries to dictionary of lists
-        for k in self.episode_metrics[0].keys():
-            metrics[k] = [d[k] for d in self.episode_metrics]
+    def get_episode_plot(self, columns, interval=1000):
+        fig = plt.figure()
+        axis = fig.add_subplot(1, 1, 1)
 
-        df = pd.DataFrame(metrics)
-        if 'total_reward' in df.columns:
-            df['mean_reward'] = pd.rolling_mean(df['total_reward'], window=50, min_periods=0)
+        def animate(i):
+            data = self.get_episode_metrics()
 
-        return df
+            if data.shape[0] > 0:
+                axis.clear()
+                for col in columns:
+                    axis.plot(data[col])
 
+            return axis
+
+        anim = animation.FuncAnimation(fig, animate, interval=interval)
+        return plt, anim
