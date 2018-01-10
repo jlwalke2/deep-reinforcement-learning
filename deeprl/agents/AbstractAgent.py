@@ -19,7 +19,7 @@ from EventHandler import EventHandler
 
 
 class AbstractAgent:
-    def __init__(self, env, policy=None, memory=None, max_steps_per_episode=0, logger=None, callbacks=[], name=None, api_key=None, seed=None):
+    def __init__(self, env, policy=None, memory=None, max_steps_per_episode=0, logger=None, metrics=None, callbacks=[], name=None, api_key=None, seed=None):
         self.name = name or self.__class__.__name__
         self.env = env
         self.policy = policy
@@ -39,12 +39,16 @@ class AbstractAgent:
 #        self.logger.parent.handlers[0].addFilter(logging.Filter('root.' + __name__))
 
         # Create a metrics object if one was not provided
-        metrics = [o for o in callbacks if isinstance(o, Monitor)]
-        if len(metrics) == 0:
-            self.metrics = Monitor()
+        if metrics:
+            self.metrics = metrics
             callbacks.append(self.metrics)
         else:
-            self.metrics = metrics[0]
+            metrics = [o for o in callbacks if isinstance(o, Monitor)]
+            if len(metrics) == 0:
+                self.metrics = Monitor()
+                callbacks.append(self.metrics)
+            else:
+                self.metrics = metrics[0]
 
         self.episode_start = EventHandler()
         self.episode_end = EventHandler()
