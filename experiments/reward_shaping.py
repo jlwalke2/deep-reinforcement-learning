@@ -7,6 +7,7 @@ from keras.layers import Dense
 from keras.optimizers import rmsprop
 import gym
 import multiprocessing
+import logging
 
 def run_agent_no_shaping(name, metrics):
     env = gym.make('LunarLander-v2')
@@ -20,11 +21,13 @@ def run_agent_no_shaping(name, metrics):
         Dense(units=num_actions, activation='linear')
     ])
     model.compile(loss='mse', optimizer=rmsprop(lr=0.0016, decay=0.000001))
+    logger = multiprocessing.log_to_stderr()
+    logger.setLevel(logging.INFO)
 
     agent = DoubleDeepQAgent(name=name, env=env, model=model,
                              policy=EpsilonGreedyPolicy(min=0.025, decay=0.96, exploration_episodes=1),
                              memory=PrioritizedMemory(maxlen=50000, sample_size=32),
-                             logger=multiprocessing.log_to_stderr(), metrics=metrics, gamma=0.99, max_steps_per_episode=500)
+                             logger=logger, metrics=metrics, gamma=0.99, max_steps_per_episode=500)
 
     agent.train(target_model_update=750, max_episodes=10, render_every_n=10)
 
@@ -41,11 +44,13 @@ def run_agent_with_shaping(name, metrics):
         Dense(units=num_actions, activation='linear')
     ])
     model.compile(loss='mse', optimizer=rmsprop(lr=0.0016, decay=0.000001))
+    logger = multiprocessing.log_to_stderr()
+    logger.setLevel(logging.INFO)
 
     agent = DoubleDeepQAgent(name=name, env=env, model=model,
                              policy=EpsilonGreedyPolicy(min=0.025, decay=0.96, exploration_episodes=1),
                              memory=PrioritizedMemory(maxlen=50000, sample_size=32),
-                             logger=multiprocessing.log_to_stderr(), metrics=metrics, gamma=0.99, max_steps_per_episode=500)
+                             logger=logger, metrics=metrics, gamma=0.99, max_steps_per_episode=500)
 
     agent.train(target_model_update=750, max_episodes=10, render_every_n=10)
 
@@ -54,7 +59,6 @@ if __name__ == '__main__':
     manager = ModelManager()
     manager.start()
     metrics = manager.Monitor()
-    logger = multiprocessing.log_to_stderr()
 
     processes = [multiprocessing.Process(target=run_agent_no_shaping, args=('AgentNoShape', metrics), name='Worker 1'),
                  multiprocessing.Process(target=run_agent_with_shaping, args=('AgentWithShape', metrics), name='Worker 2')]
@@ -65,8 +69,9 @@ if __name__ == '__main__':
     for p in processes:
         p.join()
 
+    metrics.save('reward_shaping.csv')
     df = metrics.get_episode_metrics()
-    print(df)
+    df.plot()
     pass
 
 
