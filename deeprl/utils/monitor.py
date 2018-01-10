@@ -71,7 +71,9 @@ class Monitor(object):
         assert end is None or end > start, 'Start record must occur before end record.'
 
         end = end or len(self.episode_metrics)
-        return pd.DataFrame(self.episode_metrics[start:end])
+        metrics = pd.DataFrame(self.episode_metrics[start:end])
+        metrics.set_index('episode_count', inplace=True)
+        return metrics
 
 
     def get_episode_plot(self, columns, interval=1000):
@@ -93,4 +95,4 @@ class Monitor(object):
 
     def save(self, filename):
         df = self.get_episode_metrics()
-        df.to_csv(filename, index=False)
+        df.to_csv(filename)
