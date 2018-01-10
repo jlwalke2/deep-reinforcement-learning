@@ -9,11 +9,26 @@ class DoubleDeepQAgent(DeepQAgent):
 
         self.target_model = Sequential.from_config(self.model.get_config())
 
+    def choose_action(self, state):
+        q_values = self.model.predict_on_batch(state)
+        return self.policy(q_values)
+
+    def train(self, target_model_update, **kwargs):
+        if target_model_update <= 0:
+            raise ValueError('target_model_update must be a positive number.')
+
+        self._target_model_update = target_model_update
+
+        super(DoubleDeepQAgent, self).train(**kwargs)
+
+
     def _run_episode(self, target_model_update, steps_before_training, total_steps, render):
         episode_done = False
         total_reward = 0
         total_error = 0
         step_count = 0
+        self._target_model_update = target_model_update
+        self._steps_before_training = steps_before_training
 
         s = self.env.reset()  # Get initial state observation
 
@@ -59,6 +74,7 @@ class DoubleDeepQAgent(DeepQAgent):
             self.logger.debug("S: {}\tA: {}\tR: {}\tS': {}\tDone: {}".format(s, a, r, s_prime, episode_done))
 
             s = s_prime
+
 
         return total_reward, total_error, step_count
 
@@ -114,9 +130,6 @@ class DoubleDeepQAgent(DeepQAgent):
 
         self.calculate_error(target=targets, estimate=estimate)
 
-        # targets = self.model.predict_on_batch(states)
-        # TODO: Add callback w/ diff for priority replay
-
         diff = targets[range(n), actions.astype('int32').ravel()] - updated_targets[:, 0]
         # targets[range(n), actions.astype('int32').ravel()] = updated_targets[:, 0]
 
@@ -126,3 +139,24 @@ class DoubleDeepQAgent(DeepQAgent):
                        target=targets, delta=diff, error=error)
 
         return error
+
+
+
+    # def on_episode_end(self, **kwargs):
+    #     self.logger.info(self._episode_end_template.format(**kwargs))
+
+    def on_step_end(self, **kwargs):
+        assert 'total_steps' in kwargs
+        total_steps = kwargs.get('total_steps')
+
+        # Perform hard / soft updates of target model weights
+        if self._target_model_update < 1.0:
+            self._update_target_model(self._target_model_update)
+        elif total_steps % self._target_model_update == 0:
+            self._update_target_model()
+
+        if total_steps > self._steps_before_training:
+            error = self._update_weights()
+#            total_error += error
+
+

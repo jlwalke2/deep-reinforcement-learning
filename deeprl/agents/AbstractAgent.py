@@ -4,10 +4,10 @@ import numpy as np
 import logging
 import random as rnd
 
-
 from shutil import rmtree
 from tempfile import mkdtemp
 from keras.models import Model, Sequential
+from string import Template
 from ..utils.monitor import Monitor
 
 from EventHandler import EventHandler
@@ -19,24 +19,16 @@ from EventHandler import EventHandler
 
 
 class AbstractAgent:
-    def __init__(self, env, model, policy=None, memory=None, max_steps_per_episode=0, logger=None, callbacks=[], api_key=None, seed=None):
+    def __init__(self, env, policy=None, memory=None, max_steps_per_episode=0, logger=None, callbacks=[], name=None, api_key=None, seed=None):
+        self.name = name or self.__class__.__name__
         self.env = env
         self.policy = policy
-        self.model = model
         self.memory = memory
         self.max_steps_per_episode = max_steps_per_episode
-
-        if isinstance(env.action_space, gym.spaces.discrete.Discrete):
-            self.num_actions = env.action_space.n
-        else:
-            self.num_actions = env.action_space.shape[0]
-
-        if isinstance(env.observation_space, gym.spaces.discrete.Discrete):
-            self.num_features = env.observation_space.n
-        else:
-            self.num_features = env.observation_space.shape[0]
-
+        self.num_actions = AbstractAgent._get_space_size(env.action_space)
+        self.num_features = AbstractAgent._get_space_size(env.observation_space)
         self.api_key = api_key
+
         if logger:
             self.logger = logger
         else:
@@ -46,6 +38,7 @@ class AbstractAgent:
         # TODO:  Add easy way to turn on/off logging from different components
 #        self.logger.parent.handlers[0].addFilter(logging.Filter('root.' + __name__))
 
+        # Create a metrics object if one was not provided
         metrics = [o for o in callbacks if isinstance(o, Monitor)]
         if len(metrics) == 0:
             self.metrics = Monitor()
@@ -70,12 +63,14 @@ class AbstractAgent:
 
             if handler in dir(self):
                 handler = getattr(self, handler)
-                for observer in [self.policy, self.memory, self.logger] + callbacks:
+                for observer in [self, self.policy, self.memory, self.logger] + callbacks:
                     if event in dir(observer):
                         handler += getattr(observer, event)
 
         if self.memory is not None:
             self.step_end += self._store_memory
+
+        self._episode_end_template = 'Episode {episode_count}: \tError: {total_error:.2f} \tReward: {total_reward:.2f}'
 
         if seed is not None:
             env.seed(seed)
@@ -93,6 +88,19 @@ class AbstractAgent:
             return Sequential.from_config(model.get_config())
         elif isinstance(model, Model):
             return Model.from_config(model.get_config())
+
+    @staticmethod
+    def _get_space_size(env_space):
+        '''
+        Return the  size of an OpenAI Gym action space or observation space
+
+        :param env_space: An instance of gym.spaces
+        :return:
+        '''
+        if isinstance(env_space, gym.spaces.discrete.Discrete):
+            return env_space.n
+        else:
+            return env_space.shape[0]
 
 
     def preprocess_state(self, s, a, r, s_prime, episode_done):
@@ -124,7 +132,7 @@ class AbstractAgent:
             total_steps = 0
 
             for episode_count in range(1, max_episodes + 1):
-                self.episode_start(episode_count=episode_count)
+                self.__raise_episode_start_event(episode_count=episode_count)
 
                 render = episode_count % render_every_n == 0
                 episode_done = False
@@ -139,7 +147,7 @@ class AbstractAgent:
                         self.env.render()
                     s = np.asarray(s)
 
-                    self.step_start(step=step_count, total_steps=total_steps, s=s)
+                    self.__raise_step_start_event(step=step_count, total_steps=total_steps, s=s)
 
                     a = self.choose_action(s.reshape(1, -1))
 
@@ -159,27 +167,15 @@ class AbstractAgent:
                     if self.max_steps_per_episode and step_count >= self.max_steps_per_episode:
                         episode_done = True
 
-                    # self.memory.append((s, a, r, s_prime, episode_done))
-                    #
-                    # # Hard update of the target model every N steps
-                    # if total_steps % target_model_update == 0:
-                    #     self._update_target_model()
-                    #
-                    # # Soft update every step
-                    # elif target_model_update < 1.0:
-                    #     self._update_target_model(target_model_update)
-                    #
-                    # # Train model weights
-                    # if total_steps > steps_before_training:
-                    #     error = self._update_weights()
-                    #     total_error += error
+                    # if self.memory:
+                    #     self.memory.append((s, a, r, s_prime, episode_done))
 
-                    self.step_end(step=step_count, total_steps=total_steps, s=s, s_prime=s_prime, a=a, r=r,
+                    self.__raise_step_end_event(step=step_count, total_steps=total_steps, s=s, s_prime=s_prime, a=a, r=r,
                                   episode_done=episode_done)
 
                     s = s_prime
 
-                self.episode_end(episode_count=episode_count, total_reward=total_reward, total_error=total_error, num_steps=step_count)
+                self.__raise_episode_end_event(episode_count=episode_count, total_reward=total_reward, total_error=total_error, num_steps=step_count)
 
                 total_steps += step_count
 
@@ -199,3 +195,28 @@ class AbstractAgent:
 
         if self.memory is not None:
             self.memory.append((kwargs['s'], kwargs['a'], kwargs['r'], kwargs['s_prime'], kwargs['episode_done']))
+
+    def ___raise_event(self, event, **kwargs):
+        kwargs['sender'] = self.name
+        event(**kwargs)
+
+    def __raise_episode_start_event(self, **kwargs):
+        self.___raise_event(self.episode_start, **kwargs)
+
+    def __raise_episode_end_event(self, **kwargs):
+        self.___raise_event(self.episode_end, **kwargs)
+
+        if self._episode_end_template:
+            self.logger.info(self._episode_end_template.format(**kwargs))
+
+    def __raise_step_start_event(self, **kwargs):
+        self.___raise_event(self.step_start, **kwargs)
+
+    def __raise_step_end_event(self, **kwargs):
+        self.___raise_event(self.step_end, **kwargs)
+
+    def __raise_train_start_event(self, **kwargs):
+        self.___raise_event(self.train_start, **kwargs)
+
+    def __raise_train_end_event(self, **kwargs):
+        self.___raise_event(self.train_end, **kwargs)
