@@ -4,8 +4,8 @@ from keras.models import Sequential
 from keras.optimizers import rmsprop
 
 from deeprl.agents.DoubleDeepQAgent import DoubleDeepQAgent
-from Memories import PrioritizedMemory
-from policies import BoltzmannPolicy
+from deeprl.memories import PrioritizedMemory
+from deeprl.policies import BoltzmannPolicy
 
 SEED = 123
 
