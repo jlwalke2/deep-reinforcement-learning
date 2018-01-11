@@ -40,8 +40,18 @@ class Test(unittest.TestCase):
 
             model1 = manager.Model(model.get_config(), type(model.optimizer), model.optimizer.get_config(), model.get_weights())
             t0 = model1.get_optimizer()
-            pass
 
         finally:
             manager.shutdown()
 
+    def test_shared_monitor(self):
+        try:
+            manager = ModelManager()
+            manager.start()
+
+            metrics = manager.Monitor()
+            metrics.info('Testing...')
+
+
+        finally:
+            manager.shutdown()
