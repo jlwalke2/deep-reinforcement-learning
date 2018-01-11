@@ -10,9 +10,6 @@ import numpy as np
 class ActorCriticAgent(AbstractAgent):
     def __init__(self, actor, critic, gamma=0.99, **kwargs):
 
-        if 'model' not in kwargs:
-            kwargs['model'] = actor
-
         self.gamma = gamma
 
         super(ActorCriticAgent, self).__init__(**kwargs)
