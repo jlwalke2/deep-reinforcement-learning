@@ -1,13 +1,11 @@
 import gym
 from deeprl.agents.ActorCriticAgent import ActorCriticAgent
 import keras.backend as K
-from keras.layers import Dense, Flatten, Input, concatenate
-from keras.models import Sequential, Model
+from keras.layers import Dense
+from keras.models import Sequential
 from keras.optimizers import rmsprop
 
-from Memories import PrioritizedMemory
-from policies import EpsilonGreedyPolicy
-
+from deeprl.memories import PrioritizedMemory
 
 env = gym.make('LunarLander-v2')
 

@@ -5,8 +5,8 @@ from keras.models import Sequential
 from keras.optimizers import adam
 
 from deeprl.agents.DoubleDeepQAgent import DoubleDeepQAgent
-from Memories import PrioritizedMemory
-from policies import EpsilonGreedyPolicy
+from deeprl.memories import PrioritizedMemory
+from deeprl.policies import EpsilonGreedyPolicy
 
 SEED = 123
 
