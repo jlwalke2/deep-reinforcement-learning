@@ -67,7 +67,62 @@ class Test(unittest.TestCase):
         Compute gradient of weights wrt objective
         update weights
         '''
+        model = Sequential([
+            Dense(16, input_dim=4, activation='relu'),
+            Dense(8, activation='relu'),
+            Dense(units=2, activation='linear')
+        ])
+        model.compile(loss='mse', optimizer='sgd')
+        orig_weights = model.get_weights()
 
+        # Train model normally on a single input
+        x = np.random.random((1,4))
+        y_true = np.random.random((1,2))
+        train_loss = model.train_on_batch(x, y_true)
+
+        # Undo any weight updates made
+        model.set_weights(orig_weights)
+
+        # Build a Keras function that replicates the training function
+        model = model.model
+        input = model._feed_inputs + model._feed_targets + model._feed_sample_weights
+        output = [model.total_loss]
+        update = model.optimizer.get_updates(params=model._collected_trainable_weights, loss=model.total_loss)
+
+        f = K.function(inputs=input,
+                       outputs=output,
+                       updates=update)
+
+        # Run the function on a single input
+        sample_weight = np.ones((y_true.shape[0],), dtype=K.floatx())
+        f_loss = f([x, y_true, sample_weight])
+
+        # Both methods should have accomplished the same thing
+        self.assertEqual(train_loss, f_loss)
+
+        # Create placeholder tensors for new arrays
+        # Wrap loss function in closure
+        # Define new train function
+
+        def objective(y_pred, mask, advantage):
+            y_pred = K.print_tensor(y_pred, 'Q(s,a) = ')
+            mask = K.print_tensor(mask, 'Mask = ')
+            advantage = K.print_tensor(advantage, 'Advantage = ')
+            return K.print_tensor(-K.sum(K.log(y_pred) * mask, axis=-1) * advantage, 'loss=')
+
+        mask = K.placeholder(shape=model.output.shape, name='mask')
+        advantage = K.placeholder(ndim=1, name='advantage')
+        loss = objective(model.output, mask, advantage)
+        g = K.function(inputs=model._feed_inputs + [mask, advantage],
+                       outputs=[loss],
+                       updates=model.optimizer.get_updates(params=model._collected_trainable_weights, loss=loss))
+
+        mask = np.array([0, 1.]).reshape((1,-1))
+        advantage = np.array([2.])
+
+        t1 = model.predict(x)
+        t0 = g([x, mask, advantage])
+        t2 = model.predict(x)
 
         pass
 
