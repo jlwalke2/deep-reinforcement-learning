@@ -3,9 +3,8 @@ from deeprl.agents.DoubleDeepQAgent import DoubleDeepQAgent
 from keras.layers import Dense
 from keras.models import Sequential
 from keras.optimizers import rmsprop
-
-from Memories import PrioritizedMemory
-from policies import EpsilonGreedyPolicy
+from deeprl.memories import PrioritizedMemory
+from deeprl.policies import EpsilonGreedyPolicy
 
 SEED = 0
 
@@ -34,18 +33,18 @@ def shape_reward(*args):
     return args
 
 #memory = Memory(250000, sample_size=64)
-memory = PrioritizedMemory(50000, sample_size=32)
+memory = PrioritizedMemory(maxlen=50000, sample_size=32)
 #policy = BoltzmannPolicy()
 policy = EpsilonGreedyPolicy(min=0.025, decay=0.96, exploration_episodes=1)
 
 agent = DoubleDeepQAgent(env=env, model=model, policy=policy, memory=memory, gamma=0.99, max_steps_per_episode=500, api_key='sk_giCGTLHbRVjTTS7YYMtuA', seed=SEED)
-#agent.preprocess_state = shape_reward
+agent.preprocess_state = shape_reward
 
-agent.train(target_model_update=750, max_episodes=1500, render_every_n=10)
+agent.train(target_model_update=750, max_episodes=500, render_every_n=501)
 
-df = agent.logger.get_episode_metrics()
-p = df.plot.line(x='episode_count', y='total_reward')
-p = df.plot.line(x='episode_count', y='mean_reward', ax=p)
+df = agent.metrics.get_episode_metrics()
+p = df['total_reward'].plot()
+p = df['avg_reward'].plot(ax=p)
 p.figure.show()
 pass
 
