@@ -5,29 +5,7 @@ import matplotlib.pyplot as plt
 from matplotlib import animation
 
 
-def animated_plot(func, columns, interval=1000):
-    fig = plt.figure()
-    axis = fig.add_subplot(1, 1, 1)
-    data = None
-    # save last record?
-    # save len of existing data
-    # hcat and plot
 
-    def animate(i):
-        if data is None:
-            data = func()
-        else:
-            data.append(func(start=len(data)))
-
-        if data.shape[0] > 0:
-            axis.clear()
-            for col in columns:
-                axis.plot(data[col])
-
-        return axis
-
-    anim = animation.FuncAnimation(fig, animate, interval=interval)
-    return plt, anim
 
 class Monitor(object):
     '''Performance monitor that handles logging and metric calculations.'''
@@ -69,6 +47,9 @@ class Monitor(object):
 
     def get_episode_metrics(self, start=0, end=None):
         assert end is None or end > start, 'Start record must occur before end record.'
+
+        if self.episode_metrics is None:
+            return pd.DataFrame()
 
         end = end or len(self.episode_metrics)
         metrics = pd.DataFrame(self.episode_metrics[start:end])
