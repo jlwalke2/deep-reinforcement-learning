@@ -58,7 +58,7 @@ def run_agent_with_shaping(metrics):
             return (1 - abs(x_pos)) + (1 - y_pos)  # Encourage moving to 0,0 (center of landing pad)
 
         r = r + 0.99 * potential(s_prime) - potential(s)
-        return args
+        return (s, a, r, s_prime, done)
 
     agent = DoubleDeepQAgent(name=multiprocessing.current_process().name, env=env, model=model,
                              policy=EpsilonGreedyPolicy(min=0.025, decay=0.96, exploration_episodes=1),
