@@ -3,11 +3,12 @@ import gym.wrappers
 import numpy as np
 import logging
 import random as rnd
-
+import os
+import keras.backend as K
+from warnings import warn
 from shutil import rmtree
 from tempfile import mkdtemp
 from keras.models import Model, Sequential
-from string import Template
 from ..utils.monitor import Monitor
 
 from EventHandler import EventHandler
@@ -18,9 +19,29 @@ from EventHandler import EventHandler
 # TODO: Implement frameskip / action replay
 # TODO: Research keras callbacks for logging and metrics
 
+def set_seed(seed, env=None):
+    # See these references for further details:
+    # https://docs.python.org/3.4/using/cmdline.html#envvar-PYTHONHASHSEED
+    # https://github.com/keras-team/keras/issues/2280#issuecomment-306959926
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    rnd.seed(seed)
+    if env:
+        env.seed(seed)
+
+    if K.backend() == 'tensorflow':
+        import tensorflow as tf
+        sess = tf.Session(graph=tf.get_default_graph(),
+                          config=tf.ConfigProto(intra_op_parallelism_threads=1, inter_op_parallelism_threads=1))
+        K.set_session(sess)
+        warn('A seed was specified.  Tensorflow will use a single thread to enable reproducible results.',
+             category=RuntimeWarning)
+    else:
+        warn('Only able to set seeds when using the Tensorflow backend.  Results may not be reproducible.',
+             category=RuntimeWarning)
 
 class AbstractAgent:
-    def __init__(self, env, policy=None, memory=None, max_steps_per_episode=0, logger=None, metrics=None, callbacks=[], name=None, api_key=None, seed=None):
+    def __init__(self, env, policy=None, memory=None, max_steps_per_episode=0, logger=None, metrics=None, callbacks=[], name=None, api_key=None):
         self.name = name or self.__class__.__name__
         self.env = env
         self.policy = policy
@@ -76,12 +97,6 @@ class AbstractAgent:
             self.step_end += self._store_memory
 
         self._episode_end_template = 'Episode {episode_count}: \tError: {total_error:.2f} \tReward: {total_reward:.2f}'
-
-        if seed is not None:
-            env.seed(seed)
-            rnd.seed(seed)
-            np.random.seed(seed)
-
 
     def choose_action(self, state):
         raise NotImplementedError
