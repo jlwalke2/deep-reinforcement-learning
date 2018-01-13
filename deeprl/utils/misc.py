@@ -18,8 +18,9 @@ def set_seed(seed, env=None):
 
     if K.backend() == 'tensorflow':
         import tensorflow as tf
-        sess = tf.Session(graph=tf.get_default_graph(),
-                          config=tf.ConfigProto(intra_op_parallelism_threads=1, inter_op_parallelism_threads=1))
+        session_conf = tf.ConfigProto(intra_op_parallelism_threads=1, inter_op_parallelism_threads=1)
+        tf.set_random_seed(seed)
+        sess = tf.Session(graph=tf.get_default_graph(), config=session_conf)
         K.set_session(sess)
         warn('A seed was specified.  Tensorflow will use a single thread to enable reproducible results.',
              category=RuntimeWarning)
