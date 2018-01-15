@@ -23,15 +23,12 @@ class DeepQAgent(AbstractAgent):
 
 
     # def train(self, max_episodes=500, steps_before_training=None, target_model_update=1000, render_every_n=1, upload=False):
-    #     if upload:
-    #         assert self.api_key, 'An API key must be specified before uploading training results.'
-    #         monitor_path = mkdtemp()
-    #         self.env = gym.wrappers.Monitor(self.env, monitor_path)
-    #
     #     # Unless otherwise specified, assume training doesn't start until a full sample of steps is observed
     #     if steps_before_training is None:
     #         steps_before_training = self.memory.sample_size
     #
+    #     from collections import deque
+    #     recent_rewards = deque(maxlen=50)
     #     try:
     #         total_steps = 0
     #
@@ -43,14 +40,12 @@ class DeepQAgent(AbstractAgent):
     #
     #             # Fire any notifications
     #             self.episode_end(episode_count=episode_count, total_reward=total_reward, total_error=total_error, num_steps=steps_in_episode)
-    #
+    #             recent_rewards.append(total_reward)
+    #             avg_reward = sum(recent_rewards) / len(recent_rewards)
+    #             self.logger.info('Episode {} \tError: {} \tReward: {} \tAvg Reward: {}'.format(episode_count, total_error, total_reward, avg_reward))
     #             total_steps += steps_in_episode
     #
     #         self.env.close()
     #
     #     except KeyboardInterrupt:
     #         return
-    #     finally:
-    #         if upload:
-    #             gym.upload(monitor_path, api_key=self.api_key)
-    #             rmtree(monitor_path) # Cleanup the temp dir

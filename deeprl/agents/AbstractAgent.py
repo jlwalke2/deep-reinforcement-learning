@@ -6,8 +6,11 @@ from shutil import rmtree
 from tempfile import mkdtemp
 from keras.models import Model, Sequential
 from ..utils.monitor import Monitor
-
+from abc import ABCMeta, abstractmethod
 from EventHandler import EventHandler
+from collections import namedtuple
+
+Step = namedtuple('Step', ['s','a','r','s_prime','is_terminal'])
 
 # TODO: Buffer Memory - for replay of whole trajectories (in order)
 # TODO: Add methods for training start/stop, episode start/stop, etc
@@ -18,6 +21,8 @@ from EventHandler import EventHandler
 
 
 class AbstractAgent:
+    __metaclass__ = ABCMeta
+
     def __init__(self, env, policy=None, memory=None, max_steps_per_episode=0, logger=None, metrics=None, callbacks=[], name=None, api_key=None):
         self.name = name or self.__class__.__name__
         self.env = env
@@ -70,11 +75,12 @@ class AbstractAgent:
                     if event in dir(observer):
                         handler += getattr(observer, event)
 
-        if self.memory is not None:
-            self.step_end += self._store_memory
+        # if self.memory is not None:
+        #     self.step_end += self._store_memory
 
         self._episode_end_template = 'Episode {episode_count}: \tError: {total_error:.2f} \tReward: {total_reward:.2f}'
 
+    @abstractmethod
     def choose_action(self, state):
         raise NotImplementedError
 
@@ -129,12 +135,12 @@ class AbstractAgent:
             total_steps = 0
 
             for episode_count in range(1, max_episodes + 1):
-                self.__raise_episode_start_event(episode_count=episode_count)
-
+                self._raise_episode_start_event(episode_count=episode_count)
+                # START of episode
                 render = episode_count % render_every_n == 0
                 episode_done = False
-                total_reward = 0
-                total_error = 0
+                total_episode_reward = 0
+                total_episode_error = 0
                 step_count = 0
 
                 s = self.env.reset()  # Get initial state observation
@@ -144,7 +150,7 @@ class AbstractAgent:
                         self.env.render()
                     s = np.asarray(s)
 
-                    self.__raise_step_start_event(step=step_count, total_steps=total_steps, s=s)
+                    self._raise_step_start_event(episode_count=episode_count, step=step_count, total_steps=total_steps, s=s)
 
                     a = self.choose_action(s.reshape(1, -1))
 
@@ -156,7 +162,7 @@ class AbstractAgent:
 
                     step_count += 1
                     total_steps += 1
-                    total_reward += r  # Track rewards without shaping
+                    total_episode_reward += r  # Track rewards without shaping
 
                     s, a, r, s_prime, episode_done = self.preprocess_state(s, a, r, s_prime, episode_done)
 
@@ -164,15 +170,15 @@ class AbstractAgent:
                     if self.max_steps_per_episode and step_count >= self.max_steps_per_episode:
                         episode_done = True
 
-                    # if self.memory:
-                    #     self.memory.append((s, a, r, s_prime, episode_done))
+                    if self.memory is not None:
+                        self.memory.append((s, a, r, s_prime, episode_done))
 
-                    self.__raise_step_end_event(step=step_count, total_steps=total_steps, s=s, s_prime=s_prime, a=a, r=r,
-                                  episode_done=episode_done)
+                    self._raise_step_end_event(episode_count=episode_count, step=step_count, total_steps=total_steps, s=s, s_prime=s_prime, a=a, r=r,
+                                               episode_done=episode_done)
 
                     s = s_prime
 
-                self.__raise_episode_end_event(episode_count=episode_count, total_reward=total_reward, total_error=total_error, num_steps=step_count)
+                self._raise_episode_end_event(episode_count=episode_count, total_reward=total_episode_reward, total_error=total_episode_error, episode_steps=step_count, total_steps=total_steps)
 
                 total_steps += step_count
 
@@ -186,34 +192,34 @@ class AbstractAgent:
                 rmtree(monitor_path) # Cleanup the temp dir
 
 
-    def _store_memory(self, **kwargs):
-        for k in ['s','a','r','s_prime','episode_done']:
-            assert k in kwargs, 'Key {} not found in parameters of step_end event.'.format(k)
+    # def _store_memory(self, **kwargs):
+    #     for k in ['s','a','r','s_prime','episode_done']:
+    #         assert k in kwargs, 'Key {} not found in parameters of step_end event.'.format(k)
+    #
+    #     if self.memory is not None:
+    #         self.memory.append((kwargs['s'], kwargs['a'], kwargs['r'], kwargs['s_prime'], kwargs['episode_done']))
 
-        if self.memory is not None:
-            self.memory.append((kwargs['s'], kwargs['a'], kwargs['r'], kwargs['s_prime'], kwargs['episode_done']))
-
-    def ___raise_event(self, event, **kwargs):
+    def __raise_event(self, event, **kwargs):
         kwargs['sender'] = self.name
         event(**kwargs)
 
-    def __raise_episode_start_event(self, **kwargs):
-        self.___raise_event(self.episode_start, **kwargs)
+    def _raise_episode_start_event(self, **kwargs):
+        self.__raise_event(self.episode_start, **kwargs)
 
-    def __raise_episode_end_event(self, **kwargs):
-        self.___raise_event(self.episode_end, **kwargs)
+    def _raise_episode_end_event(self, **kwargs):
+        self.__raise_event(self.episode_end, **kwargs)
 
         if self._episode_end_template:
             self.logger.info(self._episode_end_template.format(**kwargs))
 
-    def __raise_step_start_event(self, **kwargs):
-        self.___raise_event(self.step_start, **kwargs)
+    def _raise_step_start_event(self, **kwargs):
+        self.__raise_event(self.step_start, **kwargs)
 
-    def __raise_step_end_event(self, **kwargs):
-        self.___raise_event(self.step_end, **kwargs)
+    def _raise_step_end_event(self, **kwargs):
+        self.__raise_event(self.step_end, **kwargs)
 
     def __raise_train_start_event(self, **kwargs):
-        self.___raise_event(self.train_start, **kwargs)
+        self.__raise_event(self.train_start, **kwargs)
 
     def __raise_train_end_event(self, **kwargs):
-        self.___raise_event(self.train_end, **kwargs)
+        self.__raise_event(self.train_end, **kwargs)

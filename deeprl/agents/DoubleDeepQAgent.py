@@ -11,9 +11,12 @@ class DoubleDeepQAgent(DeepQAgent):
 
     def choose_action(self, state):
         q_values = self.model.predict_on_batch(state)
+
+        assert np.any(np.isnan(q_values)) == False, 'Q-Values may not be NaN: {}'.format(q_values)
+
         return self.policy(q_values)
 
-    def train(self, target_model_update, **kwargs):
+    def train(self, target_model_update: float, **kwargs):
         if target_model_update <= 0:
             raise ValueError('target_model_update must be a positive number.')
 
@@ -22,61 +25,62 @@ class DoubleDeepQAgent(DeepQAgent):
         super(DoubleDeepQAgent, self).train(**kwargs)
 
 
-    def _run_episode(self, target_model_update, steps_before_training, total_steps, render):
-        episode_done = False
-        total_reward = 0
-        total_error = 0
-        step_count = 0
-        self._target_model_update = target_model_update
-        self._steps_before_training = steps_before_training
-
-        s = self.env.reset()  # Get initial state observation
-
-        while not episode_done:
-            if render:
-                self.env.render()
-            s = np.asarray(s)
-
-            self.step_start(step=step_count, total_steps=total_steps, s=s)
-
-            q_values = self.model.predict_on_batch(s.reshape(1, -1))
-            a = self.policy(q_values)
-
-            s_prime, r, episode_done, _ = self.env.step(a)
-
-            step_count += 1
-            total_steps += 1
-            total_reward += r  # Track rewards without shaping
-
-            s, a, r, s_prime, episode_done = self.preprocess_state(s, a, r, s_prime, episode_done)
-
-            # Force the episode to end if we've reached the maximum number of steps allowed
-            if self.max_steps_per_episode and step_count >= self.max_steps_per_episode:
-                episode_done = True
-
-            self.memory.append((s, a, r, s_prime, episode_done))
-
-            # Hard update of the target model every N steps
-            if total_steps % target_model_update == 0:
-                self._update_target_model()
-
-            # Soft update every step
-            elif target_model_update < 1.0:
-                self._update_target_model(target_model_update)
-
-            # Train model weights
-            if total_steps > steps_before_training:
-                error = self._update_weights()
-                total_error += error
-
-            self.step_end(step=step_count, total_steps=total_steps, s=s, s_prime=s_prime, a=a, r=r,
-                          episode_done=episode_done)
-            self.logger.debug("S: {}\tA: {}\tR: {}\tS': {}\tDone: {}".format(s, a, r, s_prime, episode_done))
-
-            s = s_prime
-
-
-        return total_reward, total_error, step_count
+    # def _run_episode(self, target_model_update, steps_before_training, total_steps, render):
+    #     episode_done = False
+    #     total_reward = 0
+    #     total_error = 0
+    #     step_count = 0
+    #     self._target_model_update = target_model_update
+    #     self._steps_before_training = steps_before_training
+    #
+    #     s = self.env.reset()  # Get initial state observation
+    #
+    #     while not episode_done:
+    #         if render:
+    #             self.env.render()
+    #         s = np.asarray(s)
+    #
+    #         self.step_start(step=step_count, total_steps=total_steps, s=s)
+    #
+    #         q_values = self.model.predict_on_batch(s.reshape(1, -1))
+    #         assert np.any(np.isnan(q_values)) == False, 'Q-Values may not be NaN: {}'.format(q_values)
+    #         a = self.policy(q_values)
+    #
+    #         s_prime, r, episode_done, _ = self.env.step(a)
+    #
+    #         step_count += 1
+    #         total_steps += 1
+    #         total_reward += r  # Track rewards without shaping
+    #
+    #         s, a, r, s_prime, episode_done = self.preprocess_state(s, a, r, s_prime, episode_done)
+    #
+    #         # Force the episode to end if we've reached the maximum number of steps allowed
+    #         if self.max_steps_per_episode and step_count >= self.max_steps_per_episode:
+    #             episode_done = True
+    #
+    #         self.memory.append((s, a, r, s_prime, episode_done))
+    #
+    #         # Hard update of the target model every N steps
+    #         if total_steps % target_model_update == 0:
+    #             self._update_target_model()
+    #
+    #         # Soft update every step
+    #         elif target_model_update < 1.0:
+    #             self._update_target_model(target_model_update)
+    #
+    #         # Train model weights
+    #         if total_steps > steps_before_training:
+    #             error = self._update_weights()
+    #             total_error += error
+    #
+    #         self.step_end(step=step_count, total_steps=total_steps, s=s, s_prime=s_prime, a=a, r=r,
+    #                       episode_done=episode_done)
+    #         self.logger.debug("S: {}\tA: {}\tR: {}\tS': {}\tDone: {}".format(s, a, r, s_prime, episode_done))
+    #
+    #         s = s_prime
+    #
+    #
+    #     return total_reward, total_error, step_count
 
     def _update_target_model(self, ratio=None):
         if ratio:
@@ -128,7 +132,7 @@ class DoubleDeepQAgent(DeepQAgent):
         targets = estimate.copy()
         targets[range(n), actions.astype('int32').ravel()] = updated_targets[:, 0]
 
-        self.calculate_error(target=targets, estimate=estimate)
+        #self.calculate_error(target=targets, estimate=estimate)
 
         diff = targets[range(n), actions.astype('int32').ravel()] - updated_targets[:, 0]
         # targets[range(n), actions.astype('int32').ravel()] = updated_targets[:, 0]
@@ -140,23 +144,39 @@ class DoubleDeepQAgent(DeepQAgent):
 
         return error
 
+    def _raise_step_end_event(self, **kwargs):
+        assert 'episode_count' in kwargs.keys()
+        assert 'total_steps' in kwargs.keys()
+
+        # Hard update of target model weights every N steps
+        if kwargs['total_steps'] % self._target_model_update == 0:
+            self._update_target_model()
+        elif self._target_model_update < 1:
+            # Soft weight update after every step
+            self._update_target_model(self._target_model_update)
+
+        # Train model
+        if kwargs['total_steps'] > self._steps_before_training:
+            error = self._update_weights()
+
+        super(DoubleDeepQAgent, self)._raise_step_end_event(**kwargs)
 
 
     # def on_episode_end(self, **kwargs):
     #     self.logger.info(self._episode_end_template.format(**kwargs))
 
-    def on_step_end(self, **kwargs):
-        assert 'total_steps' in kwargs
-        total_steps = kwargs.get('total_steps')
-
-        # Perform hard / soft updates of target model weights
-        if self._target_model_update < 1.0:
-            self._update_target_model(self._target_model_update)
-        elif total_steps % self._target_model_update == 0:
-            self._update_target_model()
-
-        if total_steps > self._steps_before_training:
-            error = self._update_weights()
-#            total_error += error
+#     def on_step_end(self, **kwargs):
+#         assert 'total_steps' in kwargs
+#         total_steps = kwargs.get('total_steps')
+#
+#         # Perform hard / soft updates of target model weights
+#         if self._target_model_update < 1.0:
+#             self._update_target_model(self._target_model_update)
+#         elif total_steps % self._target_model_update == 0:
+#             self._update_target_model()
+#
+#         if total_steps > self._steps_before_training:
+#             error = self._update_weights()
+# #            total_error += error
 
 
