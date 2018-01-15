@@ -6,9 +6,9 @@ from keras.optimizers import rmsprop
 from deeprl.agents.DoubleDeepQAgent import DoubleDeepQAgent
 from deeprl.memories import PrioritizedMemory
 from deeprl.policies import BoltzmannPolicy
+from deeprl.utils import animated_plot, set_seed
 
-SEED = 123
-
+set_seed(0)
 env = gym.make('CartPole-v0')
 
 num_features = env.observation_space.shape[0]
@@ -26,14 +26,16 @@ memory = PrioritizedMemory(maxlen=50000)
 policy = BoltzmannPolicy()
 
 
-agent = DoubleDeepQAgent(env=env, model=model, policy=policy, memory=memory, gamma=0.99, max_steps_per_episode=500, seed=SEED)
+agent = DoubleDeepQAgent(env=env, model=model, policy=policy, memory=memory, gamma=0.99, max_steps_per_episode=500)
 
-#import logging
-#agent.policy.logger.setLevel(logging.DEBUG)
-agent.train(target_model_update=1e-2, upload=False, max_episodes=200)
+plt, anim = animated_plot(agent.metrics.get_episode_metrics, ['total_reward','avg_reward'])
+plt.show(block=False)
 
-df = agent.logger.get_episode_metrics()
-p = df.plot.line(x='episode_count', y='total_reward')
-p = df.plot.line(x='episode_count', y='mean_reward', ax=p)
+agent.train(target_model_update=1e-2, upload=False, max_episodes=100, render_every_n=1001)
+
+df = agent.metrics.get_episode_metrics()
+df.to_csv('cartpole.csv')
+p = df.plot.line(y='total_reward')
+p = df.plot.line(y='avg_reward', ax=p)
 p.figure.show()
 pass
