@@ -8,10 +8,11 @@ from keras.models import Model, Sequential
 from abc import ABCMeta, abstractmethod
 from collections import namedtuple
 from ..utils import History, EventHandler
-from ..utils.metrics import EpisodeReward, RollingEpisodeReward
+from ..utils.metrics import EpisodeReward, RollingEpisodeReward, EpisodeTime
 
 Step = namedtuple('Step', ['s','a','r','s_prime','is_terminal'])
 
+# TODO: Reconcile logging teplates with metric names
 # TODO: Change exploration episodes to exploration steps?
 # TODO: Implement frameskip / action replay
 
@@ -40,7 +41,7 @@ class AbstractAgent:
 
         # Setup default metrics if none were provided
         if len(metrics) == 0:
-            metrics += [EpisodeReward(), RollingEpisodeReward()]
+            metrics += [EpisodeReward(), RollingEpisodeReward(), EpisodeTime()]
 
         # Metrics are just events that return a value when called
         callbacks.extend(metrics)
@@ -87,7 +88,7 @@ class AbstractAgent:
 
         # Logging templates
         self.step_end_template = None
-        self.episode_end_template = 'Episode {episode}: \tError: {total_error:.2f} \tReward: {EpisodeReward: .2f} RollingEpisodeReward: {RollingEpisodeReward50: .2f}'
+        self.episode_end_template = 'Episode {episode}: \tError: {total_error:.2f} \tReward: {EpisodeReward: .2f} RollingEpisodeReward: {RollingEpisodeReward50: .2f} Runtime: {EpisodeTime.microseconds}'
 
     @abstractmethod
     def choose_action(self, state):
