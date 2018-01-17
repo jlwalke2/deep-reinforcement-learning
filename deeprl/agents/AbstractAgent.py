@@ -15,7 +15,8 @@ Step = namedtuple('Step', ['s','a','r','s_prime','is_terminal'])
 # TODO: Change exploration episodes to exploration steps?
 # TODO: Implement frameskip / action replay
 
-class Status(dict):
+class DotDict(dict):
+    """Standard dictionary with support for accessing items with dot notation: dict.key instead of dict['key']"""
     def __getattr__(self, item):
         return self.get(item, None)
 
@@ -35,7 +36,7 @@ class AbstractAgent:
         self.num_actions = AbstractAgent._get_space_size(env.action_space)
         self.num_features = AbstractAgent._get_space_size(env.observation_space)
         self.api_key = api_key
-        self.status = Status(sender=self.name)
+        self._status = DotDict(sender=self.name)
 
         # Setup default metrics if none were provided
         if len(metrics) == 0:
@@ -144,21 +145,21 @@ class AbstractAgent:
             self.steps_before_training = self.memory.sample_size
 
         try:
-            self.status.total_steps = 0
+            self._status.total_steps = 0
 
             for episode_count in range(1, max_episodes + 1):
-                self.status.episode = episode_count
-                self.status.render  = episode_count % render_every_n == 0
-                self.status.episode_done = False
-                self.status.step = 0
+                self._status.episode = episode_count
+                self._status.render  = episode_count % render_every_n == 0
+                self._status.episode_done = False
+                self._status.step = 0
                 total_episode_error = 0
 
                 self._raise_episode_start_event()
 
                 s = self.env.reset()  # Get initial state observation
 
-                while not self.status.episode_done:
-                    if self.status.render:
+                while not self._status.episode_done:
+                    if self._status.render:
                         self.env.render()
                     s = np.asarray(s)
 
@@ -172,20 +173,20 @@ class AbstractAgent:
                     if isinstance(r, np.ndarray):
                         r = np.sum(r)
 
-                    self.status.step += 1
-                    self.status.reward = r
-                    self.status.total_steps += 1
-                    self.status.reward = r
+                    self._status.step += 1
+                    self._status.reward = r
+                    self._status.total_steps += 1
+                    self._status.reward = r
 
                     s, a, r, s_prime, episode_done = self.preprocess_state(s, a, r, s_prime, episode_done)
-                    self.status.episode_done = episode_done
+                    self._status.episode_done = episode_done
 
                     # Force the episode to end if we've reached the maximum number of steps allowed
-                    if self.max_steps_per_episode and self.status.step >= self.max_steps_per_episode:
-                        self.status.episode_done = True
+                    if self.max_steps_per_episode and self._status.step >= self.max_steps_per_episode:
+                        self._status.episode_done = True
 
                     if self.memory is not None:
-                        self.memory.append((s, a, r, s_prime, self.status.episode_done))
+                        self.memory.append((s, a, r, s_prime, self._status.episode_done))
 
                     self._raise_step_end_event(s=s, s_prime=s_prime, a=a, r=r)
 
@@ -206,13 +207,13 @@ class AbstractAgent:
 
     def __raise_event(self, event, **kwargs):
         # Ensure status information is passed to eventhandlers
-        kwargs.update(self.status)
+        kwargs.update(self._status)
 
         # Call events and store any metrics returned
         metrics = event(**kwargs)
 
         # Update the status with the computed metrics
-        self.status.update(metrics)
+        self._status.update(metrics)
 
     def _raise_episode_start_event(self, **kwargs):
         self.__raise_event(self.episode_start, **kwargs)
@@ -234,6 +235,8 @@ class AbstractAgent:
 
 
     def on_step_end(self, **kwargs):
+        self.logger.debug(self._status)
+
         if self.step_end_template:
             self.logger.info(self.step_end_template.format(**kwargs))
 
