@@ -1,5 +1,5 @@
 import unittest
-from EventHandler import EventHandler
+from deeprl.utils import EventHandler
 
 class Test(unittest.TestCase):
     def testAddEvent(self):
