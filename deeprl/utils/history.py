@@ -1,10 +1,8 @@
-from collections import deque, namedtuple
+from collections import namedtuple
 from datetime import datetime
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib import animation
-
-
 
 
 class History(object):
@@ -13,7 +11,6 @@ class History(object):
     # TODO: Add optional checkpointing to a file
     def __init__(self, window_size=100):
         self.episode_metrics = []
-        self.recent_rewards = deque(maxlen=window_size)
         self.episode_start_time = None
         self._Tuple = None
 
@@ -21,16 +18,6 @@ class History(object):
         # Save start time so we can calculate episode duration later
         self.episode_start_time = datetime.now()
 
-    # TODO: rolling metrics inaccurate if multiple agents running
-    # def compute_metrics(self, **kwargs):
-    #     if kwargs.get('total_reward', None):
-    #         self.recent_rewards.append(kwargs['total_reward'])
-    #         kwargs['avg_reward'] = avg_reward = sum(self.recent_rewards) / len(self.recent_rewards)
-    #
-    #     if self.episode_start_time:
-    #         kwargs['episode_duration'] = datetime.now() - self.episode_start_time
-    #
-    #     return kwargs
 
     def on_episode_end(self, **kwargs):
         # Create a named tuple to match the fields if not already done
@@ -39,7 +26,6 @@ class History(object):
 
         # Store the metrics
         self.episode_metrics.append(self._Tuple(**kwargs))
-
 
     def get_episode_metrics(self, start=0, end=None):
         assert end is None or end > start, 'Start record must occur before end record.'
