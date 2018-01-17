@@ -66,9 +66,9 @@ class EpsilonGreedyPolicy(AbstractPolicy):
             return a
 
     def on_episode_end(self, *args, **kwargs):
-        assert 'episode_count' in kwargs.keys()
+        assert 'episode' in kwargs.keys()
 
-        if kwargs['episode_count'] > self.exploration_episodes:
+        if kwargs['episode'] > self.exploration_episodes:
             self.epsilon = max(self.epsilon * self.decay, self.min)
 
         self.logger.info('Epsilon: {}'.format(round(self.epsilon, 2)))
