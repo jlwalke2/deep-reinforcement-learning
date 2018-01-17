@@ -35,7 +35,9 @@ class History(object):
 
         end = end or len(self.episode_metrics)
         metrics = pd.DataFrame(self.episode_metrics[start:end])
-        metrics.set_index('episode_count', inplace=True)
+
+        if 'episode' in metrics.columns:
+            metrics.set_index('episode', inplace=True)
         return metrics
 
 
