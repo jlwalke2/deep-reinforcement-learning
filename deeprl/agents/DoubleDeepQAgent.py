@@ -89,18 +89,18 @@ class DoubleDeepQAgent(DeepQAgent):
         return error
 
     def _raise_step_end_event(self, **kwargs):
-        assert self.status.episode is not None
-        assert 'total_steps' in self.status
+        assert self._status.episode is not None
+        assert 'total_steps' in self._status
 
         # Hard update of target model weights every N steps
-        if self.status.total_steps % self._target_model_update == 0:
+        if self._status.total_steps % self._target_model_update == 0:
             self._update_target_model()
         elif self._target_model_update < 1:
             # Soft weight update after every step
             self._update_target_model(self._target_model_update)
 
         # Train model
-        if self.status.total_steps > self._steps_before_training:
+        if self._status.total_steps > self._steps_before_training:
             error = self._update_weights()
 
         super(DoubleDeepQAgent, self)._raise_step_end_event(**kwargs)
