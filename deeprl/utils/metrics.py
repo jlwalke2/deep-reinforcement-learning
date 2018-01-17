@@ -1,4 +1,8 @@
 from collections import deque
+from datetime import datetime
+
+# Deep Reinforcement Learnign that Matters (https://arxiv.org/pdf/1709.06560.pdf)
+
 
 def metric(object):
     """Designates an object as a calculator for a metric."""
@@ -6,6 +10,17 @@ def metric(object):
     if not hasattr(object, 'name'):
         object.name = object.__name__
     return object
+
+
+@metric
+class EpisodeTime():
+    """Calculate the total runtime of an episode."""
+
+    def on_episode_start(self, **kwargs):
+        self.start = datetime.now()
+
+    def on_episode_end(self, **kwargs):
+        return datetime.now() - self.start
 
 @metric
 class CumulativeReward():
