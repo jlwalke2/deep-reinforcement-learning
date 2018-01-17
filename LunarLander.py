@@ -1,12 +1,14 @@
 import gym
-from deeprl.agents.DoubleDeepQAgent import DoubleDeepQAgent
+from deeprl.agents import DoubleDeepQAgent
 from keras.layers import Dense
 from keras.models import Sequential
 from keras.optimizers import rmsprop
-from deeprl.memories import PrioritizedMemory
-from deeprl.policies import EpsilonGreedyPolicy
+from deeprl.memories import PrioritizedMemory, Memory
+from deeprl.policies import EpsilonGreedyPolicy, BoltzmannPolicy
+from deeprl.utils import set_seed, animated_plot
 
-SEED = 0
+#set_seed(0)
+
 
 env = gym.make('LunarLander-v2')
 
@@ -30,19 +32,22 @@ def shape_reward(*args):
 
     r = r + 0.99*potential(s_prime) - potential(s)
 
-    return args
+    return (s, a, r, s_prime, done)
 
-#memory = Memory(250000, sample_size=64)
+#memory = Memory(maxlen=250000, sample_size=32)
 memory = PrioritizedMemory(maxlen=50000, sample_size=32)
-#policy = BoltzmannPolicy()
-policy = EpsilonGreedyPolicy(min=0.025, decay=0.96, exploration_episodes=1)
+policy = BoltzmannPolicy()
+#policy = EpsilonGreedyPolicy(min=0.1, decay=0.99, exploration_episodes=1)
 
-agent = DoubleDeepQAgent(env=env, model=model, policy=policy, memory=memory, gamma=0.99, max_steps_per_episode=500, api_key='sk_giCGTLHbRVjTTS7YYMtuA', seed=SEED)
-agent.preprocess_state = shape_reward
+agent = DoubleDeepQAgent(env=env, model=model, policy=policy, memory=memory, gamma=0.99, max_steps_per_episode=500)
+#agent.preprocess_state = shape_reward
 
-agent.train(target_model_update=750, max_episodes=500, render_every_n=501)
+plt, anim = animated_plot(agent.history.get_episode_metrics, ['total_reward', 'avg_reward'])
+plt.show(block=False)
+agent.train(target_model_update=1e-3, max_episodes=1000, render_every_n=50)
 
-df = agent.metrics.get_episode_metrics()
+df = agent.history.get_episode_metrics()
+df.to_csv('lunar_lander.csv')
 p = df['total_reward'].plot()
 p = df['avg_reward'].plot(ax=p)
 p.figure.show()

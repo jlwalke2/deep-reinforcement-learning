@@ -31,7 +31,7 @@ if __name__ == '__main__':
     agent.logger.setLevel(logging.DEBUG)
     agent.train(num_threads=1, max_episodes=10, render_every_n=10)
 
-    df = agent.metrics.get_episode_metrics()
+    df = agent.history.get_episode_metrics()
     if df.shape[0] > 0:
         p = df.plot.line(x='episode_count', y='total_reward')
         p = df.plot.line(x='episode_count', y='mean_reward', ax=p)

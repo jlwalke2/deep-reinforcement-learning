@@ -7,42 +7,38 @@ from matplotlib import animation
 
 
 
-class Monitor(object):
+class History(object):
     '''Performance monitor that handles logging and metric calculations.'''
 
     # TODO: Add optional checkpointing to a file
     def __init__(self, window_size=100):
-        self.episode_metrics = None
+        self.episode_metrics = []
         self.recent_rewards = deque(maxlen=window_size)
         self.episode_start_time = None
+        self._Tuple = None
 
     def on_episode_start(self, *args, **kwargs):
         # Save start time so we can calculate episode duration later
         self.episode_start_time = datetime.now()
 
     # TODO: rolling metrics inaccurate if multiple agents running
-    def compute_metrics(self, **kwargs):
-        if kwargs.get('total_reward', None):
-            self.recent_rewards.append(kwargs['total_reward'])
-            kwargs['avg_reward'] = avg_reward = sum(self.recent_rewards) / len(self.recent_rewards)
-
-        if self.episode_start_time:
-            kwargs['episode_duration'] = datetime.now() - self.episode_start_time
-
-        return kwargs
+    # def compute_metrics(self, **kwargs):
+    #     if kwargs.get('total_reward', None):
+    #         self.recent_rewards.append(kwargs['total_reward'])
+    #         kwargs['avg_reward'] = avg_reward = sum(self.recent_rewards) / len(self.recent_rewards)
+    #
+    #     if self.episode_start_time:
+    #         kwargs['episode_duration'] = datetime.now() - self.episode_start_time
+    #
+    #     return kwargs
 
     def on_episode_end(self, **kwargs):
-        # Suppliment with additional computed metrics
-        metrics = self.compute_metrics(**kwargs)
-
         # Create a named tuple to match the fields if not already done
-        if self.episode_metrics is None:
-            self.episode_metrics = []
-            global episode
-            episode = namedtuple('Episode', metrics.keys())
+        if self._Tuple is None:
+            self._Tuple = namedtuple('Episode', kwargs.keys())
 
         # Store the metrics
-        self.episode_metrics.append(episode(**metrics))
+        self.episode_metrics.append(self._Tuple(**kwargs))
 
 
     def get_episode_metrics(self, start=0, end=None):

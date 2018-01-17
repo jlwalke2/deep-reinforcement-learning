@@ -28,12 +28,12 @@ policy = BoltzmannPolicy()
 
 agent = DoubleDeepQAgent(env=env, model=model, policy=policy, memory=memory, gamma=0.99, max_steps_per_episode=500)
 
-plt, anim = animated_plot(agent.metrics.get_episode_metrics, ['total_reward','avg_reward'])
+plt, anim = animated_plot(agent.history.get_episode_metrics, ['total_reward', 'avg_reward'])
 plt.show(block=False)
 
-agent.train(target_model_update=1e-2, upload=False, max_episodes=100, render_every_n=1001)
+agent.train(target_model_update=1e-2, upload=False, max_episodes=1000, render_every_n=1001)
 
-df = agent.metrics.get_episode_metrics()
+df = agent.history.get_episode_metrics()
 df.to_csv('cartpole.csv')
 p = df.plot.line(y='total_reward')
 p = df.plot.line(y='avg_reward', ax=p)

@@ -5,22 +5,28 @@ import logging
 from shutil import rmtree
 from tempfile import mkdtemp
 from keras.models import Model, Sequential
-from ..utils.monitor import Monitor
 from abc import ABCMeta, abstractmethod
-from EventHandler import EventHandler
-from collections import namedtuple, defaultdict
+from collections import namedtuple
+from ..utils import History, EventHandler
+from ..utils.metrics import EpisodeReward, RollingEpisodeReward
 
 Step = namedtuple('Step', ['s','a','r','s_prime','is_terminal'])
 
 # TODO: Change exploration episodes to exploration steps?
 # TODO: Implement frameskip / action replay
 
+class Status(dict):
+    def __getattr__(self, item):
+        return self.get(item, None)
+
+    def __setattr__(self, key, value):
+        self[key] = value
 
 
 class AbstractAgent:
     __metaclass__ = ABCMeta
 
-    def __init__(self, env, policy=None, memory=None, max_steps_per_episode=0, logger=None, metrics=None, callbacks=[], name=None, api_key=None):
+    def __init__(self, env, policy=None, memory=None, max_steps_per_episode=0, logger=None, history=None, metrics=[], callbacks=[], name: str =None, api_key: str =None):
         self.name = name or self.__class__.__name__
         self.env = env
         self.policy = policy
@@ -29,30 +35,35 @@ class AbstractAgent:
         self.num_actions = AbstractAgent._get_space_size(env.action_space)
         self.num_features = AbstractAgent._get_space_size(env.observation_space)
         self.api_key = api_key
+        self.status = Status(sender=self.name)
 
-        self.status = defaultdict(int, sender=self.name)
+        # Setup default metrics if none were provided
+        if len(metrics) == 0:
+            metrics += [EpisodeReward(), RollingEpisodeReward()]
 
+        # Metrics are just events that return a value when called
+        callbacks.extend(metrics)
+
+        # Create a logger if one was not provided
         if logger:
             self.logger = logger
         else:
             self.logger = logging.getLogger(__name__)
             self.logger.setLevel(logging.INFO)
 
-        # TODO:  Add easy way to turn on/off logging from different components
-#        self.logger.parent.handlers[0].addFilter(logging.Filter('root.' + __name__))
-
         # Create a metrics object if one was not provided
-        if metrics:
-            self.metrics = metrics
-            callbacks.append(self.metrics)
+        if history:
+            self.history = history
+            callbacks.append(self.history)
         else:
-            metrics = [o for o in callbacks if isinstance(o, Monitor)]
-            if len(metrics) == 0:
-                self.metrics = Monitor()
-                callbacks.append(self.metrics)
+            history = [o for o in callbacks if isinstance(o, History)]
+            if len(history) == 0:
+                self.history = History()
+                callbacks.append(self.history)
             else:
-                self.metrics = metrics[0]
+                self.history = history[0]
 
+        # Setup event handlers for callbacks and metrics
         self.episode_start = EventHandler()
         self.episode_end = EventHandler()
         self.step_start = EventHandler()
@@ -61,7 +72,6 @@ class AbstractAgent:
         self.train_end = EventHandler()
         self.calculate_error = EventHandler()       # Called as pre-process hook for error calculation
 
-        # TODO: differentiate callbacks from preprocess steps
 
         # Automatically hook up any events
         for event in ['on_episode_start', 'on_episode_end', 'on_step_start', 'on_step_end', 'on_train_start',
@@ -74,10 +84,9 @@ class AbstractAgent:
                     if event in dir(observer):
                         handler += getattr(observer, event)
 
-        # if self.memory is not None:
-        #     self.step_end += self._store_memory
-
-        self._episode_end_template = 'Episode {episode_count}: \tError: {total_error:.2f} \tReward: {total_reward:.2f}'
+        # Logging templates
+        self.step_end_template = None
+        self.episode_end_template = 'Episode {episode}: \tError: {total_error:.2f} \tReward: {EpisodeReward: .2f} RollingEpisodeReward: {RollingEpisodeReward50: .2f}'
 
     @abstractmethod
     def choose_action(self, state):
@@ -135,21 +144,21 @@ class AbstractAgent:
             self.steps_before_training = self.memory.sample_size
 
         try:
-            total_steps = 0
+            self.status.total_steps = 0
 
             for episode_count in range(1, max_episodes + 1):
-                self._raise_episode_start_event()
-                # START of episode
-                render = episode_count % render_every_n == 0
-                episode_done = False
-                total_episode_reward = 0
+                self.status.episode = episode_count
+                self.status.render  = episode_count % render_every_n == 0
+                self.status.episode_done = False
+                self.status.step = 0
                 total_episode_error = 0
-                step_count = 0
+
+                self._raise_episode_start_event()
 
                 s = self.env.reset()  # Get initial state observation
 
-                while not episode_done:
-                    if render:
+                while not self.status.episode_done:
+                    if self.status.render:
                         self.env.render()
                     s = np.asarray(s)
 
@@ -163,26 +172,27 @@ class AbstractAgent:
                     if isinstance(r, np.ndarray):
                         r = np.sum(r)
 
-                    step_count += 1
-                    total_steps += 1
-                    total_episode_reward += r  # Track rewards without shaping
+                    self.status.step += 1
+                    self.status.reward = r
+                    self.status.total_steps += 1
+                    self.status.reward = r
 
                     s, a, r, s_prime, episode_done = self.preprocess_state(s, a, r, s_prime, episode_done)
+                    self.status.episode_done = episode_done
 
                     # Force the episode to end if we've reached the maximum number of steps allowed
-                    if self.max_steps_per_episode and step_count >= self.max_steps_per_episode:
-                        episode_done = True
+                    if self.max_steps_per_episode and self.status.step >= self.max_steps_per_episode:
+                        self.status.episode_done = True
 
                     if self.memory is not None:
-                        self.memory.append((s, a, r, s_prime, episode_done))
+                        self.memory.append((s, a, r, s_prime, self.status.episode_done))
 
-                    self._raise_step_end_event(s=s, s_prime=s_prime, a=a, r=r, episode_done=episode_done)
+                    self._raise_step_end_event(s=s, s_prime=s_prime, a=a, r=r)
 
                     s = s_prime
 
-                self._raise_episode_end_event(total_reward=total_episode_reward, total_error=total_episode_error)
+                self._raise_episode_end_event(total_error=total_episode_error)
 
-                total_steps += step_count
 
             self.env.close()
 
@@ -194,32 +204,23 @@ class AbstractAgent:
                 rmtree(monitor_path) # Cleanup the temp dir
 
 
-    # def _store_memory(self, **kwargs):
-    #     for k in ['s','a','r','s_prime','episode_done']:
-    #         assert k in kwargs, 'Key {} not found in parameters of step_end event.'.format(k)
-    #
-    #     if self.memory is not None:
-    #         self.memory.append((kwargs['s'], kwargs['a'], kwargs['r'], kwargs['s_prime'], kwargs['episode_done']))
-
     def __raise_event(self, event, **kwargs):
-        event(**self.status, **kwargs)
+        # Ensure status information is passed to eventhandlers
+        kwargs.update(self.status)
+
+        # Call events and store any metrics returned
+        metrics = event(**kwargs)
+
+        # Update the status with the computed metrics
+        self.status.update(metrics)
 
     def _raise_episode_start_event(self, **kwargs):
-        self.status['episode_count'] += 1
-        self.status['episode_steps'] = 0
-
         self.__raise_event(self.episode_start, **kwargs)
 
     def _raise_episode_end_event(self, **kwargs):
         self.__raise_event(self.episode_end, **kwargs)
 
-        if self._episode_end_template:
-            self.logger.info(self._episode_end_template.format(**self.status, **kwargs))
-
     def _raise_step_start_event(self, **kwargs):
-        self.status['episode_steps'] += 1
-        self.status['total_steps'] += 1
-
         self.__raise_event(self.step_start, **kwargs)
 
     def _raise_step_end_event(self, **kwargs):
@@ -230,3 +231,12 @@ class AbstractAgent:
 
     def __raise_train_end_event(self, **kwargs):
         self.__raise_event(self.train_end, **kwargs)
+
+
+    def on_step_end(self, **kwargs):
+        if self.step_end_template:
+            self.logger.info(self.step_end_template.format(**kwargs))
+
+    def on_episode_end(self, **kwargs):
+        if self.episode_end_template:
+            self.logger.info(self.episode_end_template.format(**kwargs))

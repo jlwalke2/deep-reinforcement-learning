@@ -7,8 +7,7 @@ from keras.optimizers import adam
 from deeprl.agents.DoubleDeepQAgent import DoubleDeepQAgent
 from deeprl.memories import PrioritizedMemory
 from deeprl.policies import EpsilonGreedyPolicy
-
-SEED = 123
+from deeprl.utils import animated_plot
 
 env = gym.make('MountainCar-v0')
 
@@ -37,12 +36,15 @@ def shape_reward(*args):
 memory = PrioritizedMemory(maxlen=50000)
 policy = EpsilonGreedyPolicy(min=0.05, max=0.5, decay=0.999)
 #policy = BoltzmannPolicy()
-agent = DoubleDeepQAgent(env=env, model=model, policy=policy, memory=memory, gamma=0.99, max_steps_per_episode=1000, seed=SEED)
+agent = DoubleDeepQAgent(env=env, model=model, policy=policy, memory=memory, gamma=0.99, max_steps_per_episode=1000)
 agent.preprocess_state = shape_reward
+
+plt, anim = animated_plot(agent.history.get_episode_metrics, ['total_reward', 'avg_reward'])
+plt.show(block=False)
 
 agent.train(target_model_update=1e-2, upload=False, max_episodes=1000, render_every_n=10)
 
-df = agent.logger.get_episode_metrics()
+df = agent.history.get_episode_metrics()
 p = df.plot.line(x='episode_count', y='total_reward')
 p = df.plot.line(x='episode_count', y='mean_reward', ax=p)
 p.figure.show()
