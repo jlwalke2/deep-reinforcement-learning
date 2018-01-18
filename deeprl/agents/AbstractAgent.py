@@ -15,6 +15,7 @@ Step = namedtuple('Step', ['s','a','r','s_prime','is_terminal'])
 # TODO: Reconcile logging teplates with metric names
 # TODO: Change exploration episodes to exploration steps?
 # TODO: Implement frameskip / action replay
+# TODO: Generate static initial experiences, states, etc for use in virtual batch normalization and q-value plots
 
 class DotDict(dict):
     """Standard dictionary with support for accessing items with dot notation: dict.key instead of dict['key']"""
@@ -89,7 +90,7 @@ class AbstractAgent:
 
         # Logging templates
         self.step_end_template = None
-        self.episode_end_template = 'Episode {episode}: \tError: {total_error:.2f} \tReward: {EpisodeReward: .2f} RollingEpisodeReward: {RollingEpisodeReward50: .2f} Runtime: {EpisodeTime.microseconds}'
+        self.episode_end_template = 'Episode {episode}: \tError: {total_error:.2f} \tReward: {EpisodeReward: .2f} RollingEpisodeReward: {RollingEpisodeReward50: .2f} Runtime: {EpisodeTime}'
 
     @abstractmethod
     def choose_action(self, state):
@@ -171,6 +172,9 @@ class AbstractAgent:
                     self._raise_step_start_event(s=s)
 
                     a = self.choose_action(s.reshape(1, -1))
+
+                    # TODO: Implement frame skip.
+                    # Accumulate reward
 
                     s_prime, r, episode_done, _ = self.env.step(a)
 
