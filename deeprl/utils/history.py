@@ -1,5 +1,4 @@
 from collections import namedtuple
-from datetime import datetime
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib import animation
@@ -11,21 +10,35 @@ class History(object):
     # TODO: Add optional checkpointing to a file
     def __init__(self, window_size=100):
         self.episode_metrics = []
+        self.step_metrics = []
         self.episode_start_time = None
-        self._Tuple = None
+        self._EpisodeTuple = None
+        self._StepTuple = None
 
-    def on_episode_start(self, *args, **kwargs):
-        # Save start time so we can calculate episode duration later
-        self.episode_start_time = datetime.now()
+    def on_step_end(self, **kwargs):
+        if self._StepTuple is None:
+            self._StepTuple = namedtuple('Step', kwargs.keys())
 
+        self.step_metrics.append(self._StepTuple(**kwargs))
 
     def on_episode_end(self, **kwargs):
         # Create a named tuple to match the fields if not already done
-        if self._Tuple is None:
-            self._Tuple = namedtuple('Episode', kwargs.keys())
+        if self._EpisodeTuple is None:
+            self._EpisodeTuple = namedtuple('Episode', kwargs.keys())
 
         # Store the metrics
-        self.episode_metrics.append(self._Tuple(**kwargs))
+        self.episode_metrics.append(self._EpisodeTuple(**kwargs))
+
+    def get_step_metrics(self):
+        if self.step_metrics is None:
+            return pd.DataFrame()
+
+        metrics = pd.DataFrame(self.step_metrics)
+
+        if 'step' in metrics.columns:
+            metrics.set_index('step', inplace=True)
+
+        return metrics
 
     def get_episode_metrics(self, start=0, end=None):
         assert end is None or end > start, 'Start record must occur before end record.'
@@ -59,5 +72,15 @@ class History(object):
         return plt, anim
 
     def save(self, filename):
-        df = self.get_episode_metrics()
-        df.to_csv(filename)
+        if not filename.endswith('.h5'):
+            filename += '.h5'
+        with pd.HDFStore(filename) as store:
+            store['episode_metrics'] = self.get_episode_metrics()
+            store['step_metrics'] = self.get_step_metrics()
+
+
+    def load(self, filename):
+        if not filename.endswith('.h5'):
+            filename += '.h5'
+        with pd.HDFStore(filename) as store:
+            return store['episode_metrics'], store['step_metrics']
