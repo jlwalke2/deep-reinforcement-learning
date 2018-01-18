@@ -25,6 +25,7 @@ class DotDict(dict):
         self[key] = value
 
 
+
 class AbstractAgent:
     __metaclass__ = ABCMeta
 
@@ -145,6 +146,9 @@ class AbstractAgent:
         if steps_before_training is None:
             self.steps_before_training = self.memory.sample_size
 
+        # If 0 or None is passed, disable rendering
+        if not render_every_n:
+            render_every_n = max_episodes + 1
         try:
             self._status.total_steps = 0
 
