@@ -1,5 +1,6 @@
+import gym
 import numpy as np
-from keras.models import Sequential
+from ..utils.misc import keras2dict, dict2keras
 from .DeepQAgent import DeepQAgent
 
 
@@ -74,7 +75,7 @@ class DoubleDeepQAgent(DeepQAgent):
         # training.
         estimate = self.model.predict_on_batch(states)
         targets = estimate.copy()
-        targets[range(n), actions.astype('int32').ravel()] = updated_targets[:, 0]
+        targets[range(n), actions.astype('int32').ravel()] = updated_targets[:, 0] + 1e-10 # Add small epsilon to avoid 0 error
 
         #self.calculate_error(target=targets, estimate=estimate)
 
@@ -106,21 +107,31 @@ class DoubleDeepQAgent(DeepQAgent):
         super(DoubleDeepQAgent, self)._raise_step_end_event(**kwargs)
 
 
-    # def on_episode_end(self, **kwargs):
-    #     self.logger.info(self._episode_end_template.format(**kwargs))
+    def __getstate__(self):
+        state = self.__dict__.copy()
 
-#     def on_step_end(self, **kwargs):
-#         assert 'total_steps' in kwargs
-#         total_steps = kwargs.get('total_steps')
-#
-#         # Perform hard / soft updates of target model weights
-#         if self._target_model_update < 1.0:
-#             self._update_target_model(self._target_model_update)
-#         elif total_steps % self._target_model_update == 0:
-#             self._update_target_model()
-#
-#         if total_steps > self._steps_before_training:
-#             error = self._update_weights()
-# #            total_error += error
+        # Convert Keras models into dictionaries of serializable objects
+        state['model'] = keras2dict(self.model)
+        state['target_model'] = keras2dict(self.target_model)
+        state['env'] = self.env.spec.id
+
+        # TODO: handle objects with loggers
+        del state['policy']
+        del state['logger']
+
+        return state
+
+    def __setstate__(self, state):
+        # Rebuild the Keras models
+        self.model = dict2keras(state['model'])
+        self.target_model = dict2keras(state['target_model'])
+        self.env = gym.make(state['env'])
+
+        del state['model']
+        del state['target_model']
+        del state['env']
+
+        # Restore everything else
+        self.__dict__.update(state)
 
 
