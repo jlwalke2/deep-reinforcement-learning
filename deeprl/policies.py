@@ -1,11 +1,10 @@
 import logging
 import numpy as np
 
-class AbstractPolicy():
-    def __init__(self):
-        self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(logging.INFO)
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
+class AbstractPolicy():
     def __call__(self, *args, **kwargs):
         raise NotImplementedError
 
@@ -40,7 +39,7 @@ class BoltzmannPolicy(AbstractPolicy):
         np.clip(probs, 0., 1., out=probs)   # Ensure no probability outside 0..1
         probs = probs.ravel()
 
-        self.logger.debug('Q={}\tP={}'.format(qvalues, probs))
+        logger.debug('Q={}\tP={}'.format(qvalues, probs))
         return np.random.choice(range(qvalues.size), p=probs)
 
 
@@ -62,7 +61,7 @@ class EpsilonGreedyPolicy(AbstractPolicy):
 
             # Randomly choose one of the best actions
             a = np.random.choice(best_actions.flatten())
-            self.logger.debug('Epsilon: {}  Q: {}'.format(self.epsilon, qvalues))
+            logger.debug('Epsilon: {}  Q: {}'.format(self.epsilon, qvalues))
             return a
 
     def on_episode_end(self, *args, **kwargs):
@@ -71,7 +70,7 @@ class EpsilonGreedyPolicy(AbstractPolicy):
         if kwargs['episode'] > self.exploration_episodes:
             self.epsilon = max(self.epsilon * self.decay, self.min)
 
-        self.logger.info('Epsilon: {}'.format(round(self.epsilon, 2)))
+        logger.info('Epsilon: {}'.format(round(self.epsilon, 2)))
 
 
 class GreedyPolicy(EpsilonGreedyPolicy):
