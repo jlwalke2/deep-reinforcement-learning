@@ -11,6 +11,7 @@ from ..utils import History, EventHandler
 from ..utils.metrics import EpisodeReward, RollingEpisodeReward, EpisodeTime
 
 Step = namedtuple('Step', ['s','a','r','s_prime','is_terminal'])
+logger = logging.getLogger(__name__)
 
 # TODO: Reconcile logging teplates with metric names
 # TODO: Change exploration episodes to exploration steps?
@@ -25,6 +26,15 @@ class DotDict(dict):
     def __setattr__(self, key, value):
         self[key] = value
 
+    def __getstate__(self):
+        return self.__dict__.copy()
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+
+
+_AGENT_EVENTS = ['on_episode_start', 'on_episode_end', 'on_step_start', 'on_step_end', 'on_train_start',
+                      'on_train_end', 'on_calculate_error']
 
 
 class AbstractAgent:
@@ -50,10 +60,10 @@ class AbstractAgent:
 
         # Create a logger if one was not provided
         if logger:
-            self.logger = logger
+            logger = logger
         else:
-            self.logger = logging.getLogger(__name__)
-            self.logger.setLevel(logging.INFO)
+            logger = logging.getLogger(__name__)
+            logger.setLevel(logging.INFO)
 
         # Create a metrics object if one was not provided
         if history:
@@ -78,19 +88,57 @@ class AbstractAgent:
 
 
         # Automatically hook up any events
-        for event in ['on_episode_start', 'on_episode_end', 'on_step_start', 'on_step_end', 'on_train_start',
-                      'on_train_end', 'on_calculate_error']:
-            handler = event.replace('on_', '')
-
-            if handler in dir(self):
-                handler = getattr(self, handler)
-                for observer in [self, self.policy, self.memory, self.logger] + callbacks:
-                    if event in dir(observer):
-                        handler += getattr(observer, event)
+        for observer in [self, self.policy, self.memory, logger] + callbacks:
+            self.wire_events(observer)
 
         # Logging templates
         self.step_end_template = None
         self.episode_end_template = 'Episode {episode}: \tError: {total_error:.2f} \tReward: {EpisodeReward: .2f} RollingEpisodeReward: {RollingEpisodeReward50: .2f} Runtime: {EpisodeTime}'
+
+    @property
+    def name(self):
+        return self._name
+
+    @name.setter
+    def name(self, value):
+        self._name = value
+
+        if hasattr(self, '_status'):
+            self._status['sender'] = value
+
+
+
+    @property
+    def history(self):
+        return self._history
+
+    @history.setter
+    def history(self, obj):
+        if hasattr(self, '_history'):
+            self.unwire_events(self._history)
+        self._history = obj
+        self.wire_events(obj)
+
+
+    def unwire_events(self, observer):
+        for event in _AGENT_EVENTS:
+            handler = event.replace('on_', '')
+
+            if handler in dir(self):
+                handler = getattr(self, handler)
+                if event in dir(observer):
+                    handler -= getattr(observer, event)
+
+
+    def wire_events(self, observer):
+        for event in _AGENT_EVENTS:
+            handler = event.replace('on_', '')
+
+            if handler in dir(self):
+                handler = getattr(self, handler)
+                if event in dir(observer):
+                    handler += getattr(observer, event)
+
 
     @abstractmethod
     def choose_action(self, state):
@@ -244,11 +292,12 @@ class AbstractAgent:
 
 
     def on_step_end(self, **kwargs):
-        self.logger.debug(self._status)
+        logger.debug(self._status)
 
         if self.step_end_template:
-            self.logger.info(self.step_end_template.format(**kwargs))
+            logger.info(self.step_end_template.format(**kwargs))
 
     def on_episode_end(self, **kwargs):
         if self.episode_end_template:
-            self.logger.info(self.episode_end_template.format(**kwargs))
+            logger.info(self.episode_end_template.format(**kwargs))
+
