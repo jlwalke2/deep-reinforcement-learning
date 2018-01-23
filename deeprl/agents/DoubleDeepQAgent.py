@@ -116,8 +116,9 @@ class DoubleDeepQAgent(DeepQAgent):
         state['env'] = self.env.spec.id
 
         # TODO: handle objects with loggers
-        del state['policy']
-        del state['logger']
+        for key in ['logger']:
+            if key in state:
+                del state[key]
 
         return state
 
@@ -127,6 +128,8 @@ class DoubleDeepQAgent(DeepQAgent):
         self.target_model = dict2keras(state['target_model'])
         self.env = gym.make(state['env'])
 
+        import logging
+        #state['logger'] = logging.getLogger()
         del state['model']
         del state['target_model']
         del state['env']
