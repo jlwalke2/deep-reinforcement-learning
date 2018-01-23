@@ -7,6 +7,8 @@ from matplotlib import animation
 class History(object):
     '''Performance monitor that handles logging and metric calculations.'''
 
+    # TODO: Cleanup storage/handling of metrics as list of tuples/pandas
+    # TODO: Allow tracking of step metrics to be turned on/off
     # TODO: Add optional checkpointing to a file
     def __init__(self, window_size=100):
         self.episode_metrics = []
@@ -19,7 +21,7 @@ class History(object):
         if self._StepTuple is None:
             self._StepTuple = namedtuple('Step', kwargs.keys())
 
-        self.step_metrics.append(self._StepTuple(**kwargs))
+#        self.step_metrics.append(self._StepTuple(**kwargs))
 
     def on_episode_end(self, **kwargs):
         # Create a named tuple to match the fields if not already done
@@ -46,11 +48,14 @@ class History(object):
         if self.episode_metrics is None:
             return pd.DataFrame()
 
+        if isinstance(self.episode_metrics, pd.DataFrame):
+            return self.episode_metrics
+
         end = end or len(self.episode_metrics)
         metrics = pd.DataFrame(self.episode_metrics[start:end])
 
         if 'episode' in metrics.columns:
-            metrics.set_index('episode', inplace=True)
+            metrics.set_index('episode', inplace=False)
         return metrics
 
 
@@ -74,13 +79,21 @@ class History(object):
     def save(self, filename):
         if not filename.endswith('.h5'):
             filename += '.h5'
-        with pd.HDFStore(filename) as store:
+        with pd.HDFStore(filename, 'w') as store:
             store['episode_metrics'] = self.get_episode_metrics()
-            store['step_metrics'] = self.get_step_metrics()
 
-
-    def load(self, filename):
+    @staticmethod
+    def load(filename):
         if not filename.endswith('.h5'):
             filename += '.h5'
-        with pd.HDFStore(filename) as store:
-            return store['episode_metrics'], store['step_metrics']
+
+        with pd.HDFStore(filename, 'r') as store:
+            obj = History()
+            obj.episode_metrics = store.get('episode_metrics')
+            t0 = obj.episode_metrics
+            t1 = [a for a in dir(t0) if a.startswith('t')]
+            if 'step_metrics' in store.keys():
+                obj.step_metrics = store.get('step_metrics')
+
+            return obj
+
