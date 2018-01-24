@@ -1,7 +1,6 @@
 from deeprl.utils.async import ModelManager
 import multiprocessing
 import os, os.path
-import threading
 from warnings import warn
 from deeprl.utils import History
 import logging, logging.handlers
@@ -9,41 +8,22 @@ import pickle
 import matplotlib.pyplot as plt
 
 
-# TODO: Don't generate agents until experiment is actually run
-# TODO: Assume agents passed in along with num to create and func to call when process starts
-
-def _run_agent(func, agent, history, queue):
-    # Log all messages to the queue
+def _run_agent(func, agent, queue):
+    # Get the root logger in the agent's process
     logger = logging.getLogger()
 
     # Delete existing loggers and force everything through the queue
     logger.handlers.clear()
-    logger.addHandler(logging.handlers.QueueHandler(queue))
     logger.setLevel(logging.INFO)
+    logger.addHandler(logging.handlers.QueueHandler(queue))
 
+    # Run the agent
     try:
         logger.info(f'Process {multiprocessing.current_process().name} is starting...')
-
-        # TODO: EventHandlers won't be hooked up
-        agent.history = history
         return func(agent)
     finally:
-        logger.debug(f'Process {multiprocessing.current_process().name} terminated.')
+        logger.info(f'Process {multiprocessing.current_process().name} terminated.')
 
-
-def _run_queue_listener(queue):
-    logger = logging.getLogger()
-
-    # TODO: Take in configuration
-    # TODO: Replace with QueueListener?
-    logger.addHandler(logging.StreamHandler())
-
-    while True:
-        record = queue.get()
-
-        if record == None:      # Signal from main thread to terminate logging loop
-            break
-        logger.handle(record)
 
 
 class Experiment(object):
@@ -82,9 +62,11 @@ class Experiment(object):
         history = manager.Monitor()
         log_queue = manager.Queue()
 
-        listener = threading.Thread(target=_run_queue_listener, args=(log_queue,))
+        handler = logging.StreamHandler()
+        handler.setLevel(logging.INFO)
+        handler.setFormatter(logging.Formatter('[%(asctime)s|%(levelname)s] %(message)s'))
+        listener = logging.handlers.QueueListener(log_queue, handler, respect_handler_level=True)
         listener.start()
-
 
         processes = []
         for agent, num_copies, func in self._agents:
@@ -97,7 +79,7 @@ class Experiment(object):
 
                 # Fork separate processes for each agent to run in
                 processes.append(
-                    multiprocessing.Process(target=_run_agent, args=(func, agent, history, log_queue), name=agent.name))
+                    multiprocessing.Process(target=_run_agent, args=(func, instance, log_queue), name=instance.name))
 
         for p in processes:
             p.start()
@@ -105,14 +87,24 @@ class Experiment(object):
         for p in processes:
             p.join()
 
-        log_queue.put_nowait(None)  # Signal to listener to terminate thread
-        listener.join()
+        listener.stop()
         history.save(self._HISTORY_PATH)
 
 
-    def get_plot(self, df, metric: str, **kwargs: 'passed to Pandas .plot()'):
-        df.pivot(columns='sender', values=metric).groupby(
-            lambda colname: colname.rsplit('_', maxsplit=1)[0], axis=1).mean().plot(**kwargs)
+    def get_plot(self, df, metric: str, intervals: bool =True, **kwargs: 'passed to Pandas .plot()'):
+        if 'title' not in kwargs:
+            kwargs['title'] = metric
+
+        df = df.pivot(columns='sender', values=metric).groupby(lambda colname: colname.rsplit('_', maxsplit=1)[0], axis=1)
+
+        mean = df.mean()
+        p = mean.plot(**kwargs)
+
+        if intervals:
+            min = df.min()
+            max = df.max()
+            for col in mean.columns:
+                p.fill_between(mean.index, min[col], max[col], alpha=0.2)
 
 
     def get_plots(self, metrics: list, shape: tuple =None):
@@ -122,10 +114,10 @@ class Experiment(object):
             assert shape[0] * shape[1] >= len(metrics), 'Subplot layout of {} does not subplots for {} metrics.'.format(shape, len(metrics))
 
         history = History.load(self._HISTORY_PATH)
-        episode_df = history.get_episode_metrics().set_index('episode')
+        episode_df = history.get_episode_metrics().set_index('episode', inplace=False)
 
         fig, axes = plt.subplots(nrows=shape[0], ncols=shape[1], figsize=(8, 4))
         for i in range(len(metrics)):
-            self.get_plot(episode_df, metrics[i], ax=axes[i])
+            self.get_plot(episode_df, metrics[i], ax=axes[i], title=metrics[i])
 
         return fig
