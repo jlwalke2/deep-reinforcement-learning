@@ -6,6 +6,8 @@ from warnings import warn
 from deeprl.utils import History
 import logging, logging.handlers
 import pickle
+import matplotlib.pyplot as plt
+
 
 # TODO: Don't generate agents until experiment is actually run
 # TODO: Assume agents passed in along with num to create and func to call when process starts
@@ -56,22 +58,10 @@ class Experiment(object):
         self.name = name
 
         # Assume agent is list of (agent, num_copies, init_func)
-        self._agents = []
-        for agent, num_copies, func in agents:
-            config = pickle.dumps(agent)
-            for i in range(num_copies):
-                instance = pickle.loads(config)
-                instance.name += f'_{i}'
-                self._agents.append((instance, func))
+        self._agents = agents
 
         self._HISTORY_PATH = f'{self.name}/history.h5'
 
-        # TODO: Require Agents as input and serialize to processes.  Allows control over .name for correct groupby when plotting.
-        #       Also allows control over .logger
-
-        # for name, func in initializers.items():
-        #     for id in range(num_agents):
-        #         self._agents.append((name, func, id))
 
     def run(self, force_rerun: bool =False):
 
@@ -95,13 +85,19 @@ class Experiment(object):
         listener = threading.Thread(target=_run_queue_listener, args=(log_queue,))
         listener.start()
 
-        # Fork separate processes for each agent to run in
-        processes = []
-        for agent, func in self._agents:
-            agent.history = history
-            agent.wire_events(history)
 
-            processes.append(multiprocessing.Process(target=_run_agent, args=(func, agent, history, log_queue), name=agent.name))
+        processes = []
+        for agent, num_copies, func in self._agents:
+            # Clone the agent N times
+            config = pickle.dumps(agent)
+            for i in range(num_copies):
+                instance = pickle.loads(config)
+                instance.name += f'_{i}'
+                instance.history = history
+
+                # Fork separate processes for each agent to run in
+                processes.append(
+                    multiprocessing.Process(target=_run_agent, args=(func, agent, history, log_queue), name=agent.name))
 
         for p in processes:
             p.start()
@@ -114,24 +110,22 @@ class Experiment(object):
         history.save(self._HISTORY_PATH)
 
 
-    def get_plot(self, metric: str):
-        history = History.load(self._HISTORY_PATH)
+    def get_plot(self, df, metric: str, **kwargs: 'passed to Pandas .plot()'):
+        df.pivot(columns='sender', values=metric).groupby(
+            lambda colname: colname.rsplit('_', maxsplit=1)[0], axis=1).mean().plot(**kwargs)
 
+
+    def get_plots(self, metrics: list, shape: tuple =None):
+        if shape is None:
+            shape = (1, len(metrics))
+        else:
+            assert shape[0] * shape[1] >= len(metrics), 'Subplot layout of {} does not subplots for {} metrics.'.format(shape, len(metrics))
+
+        history = History.load(self._HISTORY_PATH)
         episode_df = history.get_episode_metrics().set_index('episode')
-        t0 = episode_df.pivot(columns='sender', values=metric)
-        episode_df.pivot(columns='sender', values=metric).groupby(
-            lambda colname: colname.rsplit('_', maxsplit=1)[0], axis=1).mean().plot()
 
+        fig, axes = plt.subplots(nrows=shape[0], ncols=shape[1], figsize=(8, 4))
+        for i in range(len(metrics)):
+            self.get_plot(episode_df, metrics[i], ax=axes[i])
 
-    def get_plots(self, metrics: list):
-        history = History.load(self._HISTORY_PATH)
-
-        episode_df = history.get_episode_metrics()
-        return episode_df
-        # for metric in metrics:
-        #     episode_df.pivot(columns='sender', values=metric).groupby()
-        #
-        # df.pivot(columns='sender', values='CumulativeReward').groupby(
-        #     lambda colname: 'WithShape' if 'WithShape' in colname else 'NoShape', axis=1).mean().plot(ax=axes[0],
-        #                                                                                               title='Mean Cumulative Reward')
-
+        return fig

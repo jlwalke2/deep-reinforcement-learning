@@ -82,32 +82,6 @@ if __name__ == '__main__':
 
     e.run()
 
-    # if not os.path.isfile(fname):
-    #     manager = ModelManager()
-    #     manager.start()
-    #     metrics = manager.Monitor()
-    #
-    #     processes = [multiprocessing.Process(target=run_agent_no_shaping, args=(metrics,), name='AgentNoShape_{}'.format(i)) for i in range(num_agents)]
-    #     processes.extend([multiprocessing.Process(target=run_agent_with_shaping, args=(metrics,), name='AgentWithShape_{}'.format(i)) for i in range(num_agents)])
-    #
-    #     for p in processes:
-    #         p.start()
-    #
-    #     for p in processes:
-    #         p.join()
-    #
-    #     metrics.save(fname)
-    #     df = metrics.get_episode_metrics()
-    # else:
-    #     import pandas as pd
-    #     warn('Existing history found.  Loading history from {}'.format(fname), stacklevel=2)
-    #     from deeprl.utils import History
-    #     df, _ =  History().load(fname)
-    #     df.set_index('episode', inplace=True)
-
-        # steps_df = pd.read_csv('step_metrics.csv')
-        # steps_df.set_index('step', inplace=True)
-
     # steps_df.pivot(columns='sender', values='CumulativeReward').groupby(
     #     lambda colname: 'WithShape' if 'WithShape' in colname else 'NoShape', axis=1).plot()
     # plt.show()

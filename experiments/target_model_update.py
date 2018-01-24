@@ -1,21 +1,19 @@
 from deeprl.agents.DoubleDeepQAgent import DoubleDeepQAgent
 from deeprl.memories import PrioritizedMemory
 from deeprl.policies import EpsilonGreedyPolicy
-from deeprl.utils.async import ModelManager
 from deeprl.utils.metrics import *
 from keras.models import Sequential
 from keras.layers import Dense
-from keras.optimizers import adam
 import gym
-import multiprocessing
-import logging
-import numpy as np
 
 experiment_name = 'target_model_update'
 num_agents = 10
 num_episodes = 2000
 
 
+
+def train_fast_update(agent):
+    agent.train(target_model_update=1e-2, max_episodes=num_episodes, render_every_n=None)
 
 def train_medium_update(agent):
     agent.train(target_model_update=1e-4, max_episodes=num_episodes, render_every_n=None)
@@ -51,16 +49,21 @@ if __name__ == '__main__':
 
     from experiments.experiment import Experiment
 
-    agents = [(build_agent('MediumUpdate'), num_agents, train_medium_update),
-              (build_agent('SlowUpdate'), num_agents, train_slow_update)]
+    agents = [(build_agent('FastUpdate'), num_agents, train_fast_update),
+              (build_agent('MediumUpdate'), num_agents, train_medium_update),
+              (build_agent('SlowUpdate'), num_agents, train_slow_update),
+              ]
 
     e = Experiment(experiment_name, agents)
 
     e.run()
 
     import matplotlib.pyplot as plt
-    p = e.get_plot('CumulativeReward')
+    p = e.get_plots(['CumulativeReward','EpisodeReward', 'RollingEpisodeReward50'])
+
     plt.show()
+
+
 # if __name__ == '__main__':
 #     import matplotlib.pyplot as plt
 #     import os.path
