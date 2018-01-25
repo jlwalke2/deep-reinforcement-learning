@@ -2,7 +2,9 @@ import gym
 import numpy as np
 from ..utils.misc import keras2dict, dict2keras
 from .DeepQAgent import DeepQAgent
+import logging
 
+logger = logging.getLogger(__name__)
 
 class DoubleDeepQAgent(DeepQAgent):
     def __init__(self, **kwargs):
@@ -13,7 +15,7 @@ class DoubleDeepQAgent(DeepQAgent):
 
     def choose_action(self, state):
         q_values = self.model.predict_on_batch(state)
-
+        logger.debug('S: {}  Q(s): {}'.format(state, q_values))
         assert np.any(np.isnan(q_values)) == False, 'Q-Values may not be NaN: {}'.format(q_values)
 
         return self.policy(q_values)
@@ -128,8 +130,6 @@ class DoubleDeepQAgent(DeepQAgent):
         self.target_model = dict2keras(state['target_model'])
         self.env = gym.make(state['env'])
 
-        import logging
-        #state['logger'] = logging.getLogger()
         del state['model']
         del state['target_model']
         del state['env']

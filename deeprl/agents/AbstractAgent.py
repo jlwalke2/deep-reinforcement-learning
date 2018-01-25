@@ -171,7 +171,7 @@ class AbstractAgent:
         return (s, a, r, s_prime, episode_done)
 
 
-    def train(self, max_episodes=500, steps_before_training=None, render_every_n=1, upload=False):
+    def train(self, max_episodes: int =500, steps_before_training: int =None, frame_skip: int =4, render_every_n: int =1, upload: bool =False):
         """Train the agent in the environment for a specified number of episodes.
 
         :param max_episodes: Terminate training after this many new episodes are observed
@@ -204,25 +204,30 @@ class AbstractAgent:
                 self._raise_episode_start_event()
 
                 s = self.env.reset()  # Get initial state observation
+                action_buffer = []
 
                 while not self._status.episode_done:
                     if self._status.render:
                         self.env.render()
+
                     s = np.asarray(s)
 
                     self._raise_step_start_event(s=s)
 
-                    a = self.choose_action(s.reshape(1, -1))
+                    # Action replay.  We repeat the selected action for n steps.
+                    if len(action_buffer) == 0:
+                        action_buffer = [self.choose_action(s.reshape(1, -1))] * frame_skip
 
-                    # TODO: Implement frame skip.
+                    a = action_buffer.pop()
+
                     # Accumulate reward
-
                     s_prime, r, episode_done, _ = self.env.step(a)
 
                     # Some environments return reward as an array, flatten into a float for consistency
                     if isinstance(r, np.ndarray):
                         r = np.sum(r)
 
+                    self._status.action = a
                     self._status.step += 1
                     self._status.reward = r
                     self._status.total_steps += 1
@@ -241,6 +246,7 @@ class AbstractAgent:
                     self._raise_step_end_event(s=s, s_prime=s_prime, a=a, r=r)
 
                     s = s_prime
+
 
                 self._raise_episode_end_event(total_error=total_episode_error)
 

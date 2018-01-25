@@ -6,7 +6,11 @@ from keras.optimizers import rmsprop
 from deeprl.memories import PrioritizedMemory, Memory
 from deeprl.policies import EpsilonGreedyPolicy, BoltzmannPolicy
 from deeprl.utils import set_seed, animated_plot
+import logging
 
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+logger.handlers[0].setLevel(logging.INFO)
 #set_seed(0)
 
 
@@ -42,7 +46,7 @@ policy = BoltzmannPolicy()
 agent = DoubleDeepQAgent(env=env, model=model, policy=policy, memory=memory, gamma=0.99, max_steps_per_episode=500)
 #agent.preprocess_state = shape_reward
 
-plt, anim = animated_plot(agent.history.get_episode_metrics, ['total_reward', 'avg_reward'])
+plt, anim = animated_plot(agent.history.get_episode_metrics, ['EpisodeReward'])
 plt.show(block=False)
 agent.train(target_model_update=1e-3, max_episodes=1000, render_every_n=50)
 
