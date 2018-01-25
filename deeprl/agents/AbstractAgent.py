@@ -40,7 +40,7 @@ _AGENT_EVENTS = ['on_episode_start', 'on_episode_end', 'on_step_start', 'on_step
 class AbstractAgent:
     __metaclass__ = ABCMeta
 
-    def __init__(self, env, policy=None, memory=None, max_steps_per_episode=0, logger=None, history=None, metrics=[], callbacks=[], name: str =None, api_key: str =None):
+    def __init__(self, env, policy=None, memory=None, max_steps_per_episode=0, history=None, metrics=[], callbacks=[], name: str =None, api_key: str =None):
         self.name = name or self.__class__.__name__
         self.env = env
         self.policy = policy
@@ -57,13 +57,6 @@ class AbstractAgent:
 
         # Metrics are just events that return a value when called
         callbacks.extend(metrics)
-
-        # Create a logger if one was not provided
-        if logger:
-            logger = logger
-        else:
-            logger = logging.getLogger(__name__)
-            logger.setLevel(logging.INFO)
 
         # Create a metrics object if one was not provided
         if history:
