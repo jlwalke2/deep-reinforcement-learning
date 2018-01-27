@@ -15,16 +15,37 @@ logger = logging.getLogger(__name__)
 
 # TODO: Reconcile logging teplates with metric names
 # TODO: Change exploration episodes to exploration steps?
-# TODO: Implement frameskip / action replay
 # TODO: Generate static initial experiences, states, etc for use in virtual batch normalization and q-value plots
 
-class DotDict(dict):
-    """Standard dictionary with support for accessing items with dot notation: dict.key instead of dict['key']"""
+
+
+_AGENT_EVENTS = ['on_episode_start', 'on_episode_end', 'on_step_start', 'on_step_end', 'on_train_start',
+                      'on_train_end', 'on_calculate_error']
+
+
+class Status(dict):
+    """Standard dictionary but set of keys cannot be changed after instantiation.
+    Supports dict.key in addition to dict['key'].
+    """
+    def __init__(self, *vars):
+        super(Status, self).__init__({v: None for v in vars})
+
     def __getattr__(self, item):
-        return self.get(item, None)
+        return self[item]
 
     def __setattr__(self, key, value):
-        self[key] = value
+        if key.startswith('_'):
+            super().__setattr__(key, value)
+        elif key in self:
+            self[key] = value
+        else:
+            raise KeyError('Unable to set value. Key {} does not exist in dictionary.'.format(key))
+
+    def __setitem__(self, key, value):
+        if key in self:
+            super().__setitem__(key, value)
+        else:
+            raise KeyError('Unable to set value. Key {} does not exist in dictionary.'.format(key))
 
     def __getstate__(self):
         return self.__dict__.copy()
@@ -33,15 +54,31 @@ class DotDict(dict):
         self.__dict__.update(state)
 
 
-_AGENT_EVENTS = ['on_episode_start', 'on_episode_end', 'on_step_start', 'on_step_end', 'on_train_start',
-                      'on_train_end', 'on_calculate_error']
-
-
 class AbstractAgent:
     __metaclass__ = ABCMeta
 
+    def _build_status(self):
+        metric_names = set()
+
+        # Pull names from all registered metric callbacks
+        for event in _AGENT_EVENTS:
+            handler = event.replace('on_', '')
+
+            if handler in dir(self):
+                handler = getattr(self, handler)
+                for event in handler.metrics:
+                    metric_names.add(*event.return_values)
+
+        # Add in names that the agent sets automatically
+        metric_names.update(self._metric_names)
+
+        return Status(*metric_names)
+
+
+
     def __init__(self, env, policy=None, memory=None, max_steps_per_episode=0, history=None, metrics=[], callbacks=[], name: str =None, api_key: str =None):
         self.name = name or self.__class__.__name__
+        self._metric_names = {'episode','render','episode_done','reward','action','step','total_steps'}
         self.env = env
         self.policy = policy
         self.memory = memory
@@ -49,7 +86,6 @@ class AbstractAgent:
         self.num_actions = AbstractAgent._get_space_size(env.action_space)
         self.num_features = AbstractAgent._get_space_size(env.observation_space)
         self.api_key = api_key
-        self._status = DotDict(sender=self.name)
 
         # Setup default metrics if none were provided
         if len(metrics) == 0:
@@ -79,7 +115,6 @@ class AbstractAgent:
         self.train_end = EventHandler()
         self.calculate_error = EventHandler()       # Called as pre-process hook for error calculation
 
-
         # Automatically hook up any events
         for observer in [self, self.policy, self.memory, logger] + callbacks:
             self.wire_events(observer)
@@ -98,8 +133,6 @@ class AbstractAgent:
 
         if hasattr(self, '_status'):
             self._status['sender'] = value
-
-
 
     @property
     def history(self):
@@ -171,8 +204,10 @@ class AbstractAgent:
         '''
         return (s, a, r, s_prime, episode_done)
 
+    def test(self, max_episode: int =500, frame_skip: int =4, render_every_n: int =1):
+        pass
 
-    def train(self, max_episodes: int =500, steps_before_training: int =None, frame_skip: int =4, render_every_n: int =1, upload: bool =False):
+    def train(self, max_episodes: int =500, steps_before_training: int =None, frame_skip: int =4, render_every_n: int =0, upload: bool =False):
         """Train the agent in the environment for a specified number of episodes.
 
         :param max_episodes: Terminate training after this many new episodes are observed
@@ -180,6 +215,12 @@ class AbstractAgent:
         :param render_every_n: Render every nth episode
         :param upload: Upload training results to OpenAI Gym site?
         """
+
+        # TODO: pass metrics during training
+        # TODO: wire & unwire events
+
+        self._status = self._build_status()
+
         if upload:
             assert self.api_key, 'An API key must be specified before uploading training results.'
             monitor_path = mkdtemp()
@@ -208,31 +249,31 @@ class AbstractAgent:
                 action_buffer = []
 
                 while not self._status.episode_done:
-                    if self._status.render:
-                        self.env.render()
-
                     s = np.asarray(s)
 
                     self._raise_step_start_event(s=s)
 
                     # Action replay.  We repeat the selected action for n steps.
                     a = self.choose_action(s.reshape(1, -1))
+                    r = 0
 
-                    # Accumulate reward
-                    s_prime, r, episode_done, _ = self.env.step(a)
-
-                    # Some environments return reward as an array, flatten into a float for consistency
-                    if isinstance(r, np.ndarray):
-                        r = np.sum(r)
-
-                    # Replay the selected action if necessary
+                    # Replay the selected action as necessary
                     # Accumulate the reward from each action, but don't let the agent observe the intermediate states
-                    for _ in range(frame_skip - 1):
+                    for _ in range(frame_skip):
+                        if self._status.render:
+                            self.env.render()
+
+                        # Take action and observe reward and new state
+                        s_prime, r_new, episode_done, _ = self.env.step(a)
+
+                        # Some environments return reward as an array, flatten into a float for consistency
+                        if isinstance(r_new, np.ndarray):
+                            r_new = np.sum(r_new)
+
+                        r += r_new
+
                         if episode_done:
                             break
-
-                        s_prime, r_new, episode_done, _ = self.env.step(a)
-                        r += r_new
 
                     self._status.action = a
                     self._status.step += 1
