@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 _AGENT_EVENTS = ['on_episode_start', 'on_episode_end', 'on_step_start', 'on_step_end', 'on_train_start',
-                      'on_train_end', 'on_calculate_error']
+                      'on_train_end']
 
 
 class Status(dict):
@@ -113,7 +113,6 @@ class AbstractAgent:
         self.step_end = EventHandler()
         self.train_start = EventHandler()
         self.train_end = EventHandler()
-        self.calculate_error = EventHandler()       # Called as pre-process hook for error calculation
 
         # Automatically hook up any events
         for observer in [self, self.policy, self.memory, logger] + callbacks:
