@@ -42,11 +42,24 @@ class DoubleDeepQAgent(DeepQAgent):
             # Hard update
             self.target_model.set_weights(self.model.get_weights())
 
-    def _update_weights(self, n=0):
+    def _update_weights(self):
         '''Randomly select experiences from the replay buffer to train on.'''
-        if not n:
-            n = self.memory.sample_size
 
+        assert self._status.episode is not None
+        assert 'total_steps' in self._status
+
+        # Only proceed if the initial exploration steps have been completed.
+        if self._status.total_steps <= self._steps_before_training:
+            return
+
+        # Hard update of target model weights every N steps
+        if self._status.total_steps % self._target_model_update == 0:
+            self._update_target_model()
+        elif self._target_model_update < 1:
+            # Soft weight update after every step
+            self._update_target_model(self._target_model_update)
+
+        n = self.memory.sample_size
         states, actions, rewards, s_primes, flags = self.memory.sample(n)
 
         assert states.shape == (n, self.num_features)
@@ -55,7 +68,7 @@ class DoubleDeepQAgent(DeepQAgent):
         assert rewards.shape == (n, 1)
         assert flags.shape == (n, 1)
 
-        self.train_start(num_samples=n, s=states, a=actions, r=rewards, s_prime=s_primes, episode_done=flags)
+#        self.train_start(num_samples=n, s=states, a=actions, r=rewards, s_prime=s_primes, episode_done=flags)
 
         # Double Deep Q-Learning
         # Use online model to pick best action from s'
@@ -86,27 +99,28 @@ class DoubleDeepQAgent(DeepQAgent):
 
         error = self.model.train_on_batch(states, targets)
 
-        self.train_end(num_samples=n, s=states, a=actions, r=rewards, s_prime=s_primes, episode_done=flags,
-                       target=targets, delta=diff, error=error)
+        return dict(total_error=error, delta=diff)
 
-        return error
+#        self.train_end(num_samples=n, s=states, a=actions, r=rewards, s_prime=s_primes, episode_done=flags,
+#                       target=targets, delta=diff, error=error)
 
-    def _raise_step_end_event(self, **kwargs):
-        assert self._status.episode is not None
-        assert 'total_steps' in self._status
 
-        # Hard update of target model weights every N steps
-        if self._status.total_steps % self._target_model_update == 0:
-            self._update_target_model()
-        elif self._target_model_update < 1:
-            # Soft weight update after every step
-            self._update_target_model(self._target_model_update)
-
-        # Train model
-        if self._status.total_steps > self._steps_before_training:
-            error = self._update_weights()
-
-        super(DoubleDeepQAgent, self)._raise_step_end_event(**kwargs)
+    # def _raise_step_end_event(self, **kwargs):
+    #     assert self._status.episode is not None
+    #     assert 'total_steps' in self._status
+    #
+    #     # Hard update of target model weights every N steps
+    #     if self._status.total_steps % self._target_model_update == 0:
+    #         self._update_target_model()
+    #     elif self._target_model_update < 1:
+    #         # Soft weight update after every step
+    #         self._update_target_model(self._target_model_update)
+    #
+    #     # Train model
+    #     if self._status.total_steps > self._steps_before_training:
+    #         error = self._update_weights()
+    #
+    #     super(DoubleDeepQAgent, self)._raise_step_end_event(**kwargs)
 
 
     def __getstate__(self):

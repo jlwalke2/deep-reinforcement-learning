@@ -1,25 +1,49 @@
-class EventHandler(set):
-    def __call__(self, *args, **kwargs):
+class EventHandler():
+    def __init__(self):
+        self.metrics = set()
+        self.callbacks = set()
 
-        # If the function's instance has a .is_metric attribute = True then we know it's a metric
-        metrics = set([e for e in self if getattr(e.__self__, 'is_metric', False)])
+    def __call__(self, **kwargs):
+        values = {}
 
-        # Call metrics first so their values are available to the remaining callbacks (i.e loggers)
-        values = {event.__self__.name: event(**kwargs) for event in metrics}
+        # Call all metrics first and include the results when calling the remaining callbacks.
+        for metric in self.metrics:
+            values.update(metric(**kwargs))
+
         kwargs.update(values)
 
-        # Call remaining events
-        for event in self.difference(metrics):
-            event(*args, **kwargs)
+        # Call remaining functions
+        for event in self.callbacks:
+            event(**kwargs)
 
         return values
 
+    def __contains__(self, item):
+        return item in self.metrics or item in self.callbacks
+
+    def __iter__(self):
+        for obj in self.metrics.union(self.callbacks):
+            yield obj
+
+    def __len__(self):
+        return len(self.metrics) + len(self.callbacks)
+
     def __iadd__(self, other):
-        self.add(other)
+        t0 = dir(other)
+        if getattr(other, 'is_metric', False):
+            self.metrics.add(other)
+        else:
+            self.callbacks.add(other)
+
         return self
 
     def __isub__(self, other):
-        self.remove(other)
+        if other in self.callbacks:
+            self.callbacks.remove(other)
+
+        if other in self.metrics:
+            self.metrics.remove(other)
+
         return self
 
 

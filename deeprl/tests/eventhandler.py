@@ -24,7 +24,7 @@ class Test(unittest.TestCase):
         handler += lambda x: x/0 # Will raise ZeroDivisionError
 
         with self.assertRaises(ZeroDivisionError):
-            handler(10)
+            handler(x=10)
 
     def testMultipleEvents(self):
         handler = EventHandler()

@@ -8,7 +8,7 @@ from keras.models import Model, Sequential
 from abc import ABCMeta, abstractmethod
 from collections import namedtuple
 from ..utils import History, EventHandler
-from ..utils.metrics import EpisodeReward, RollingEpisodeReward, EpisodeTime
+from ..utils.metrics import EpisodeReturn, RollingEpisodeReturn, EpisodeTime
 
 Step = namedtuple('Step', ['s','a','r','s_prime','is_terminal'])
 logger = logging.getLogger(__name__)
@@ -53,7 +53,7 @@ class AbstractAgent:
 
         # Setup default metrics if none were provided
         if len(metrics) == 0:
-            metrics += [EpisodeReward(), RollingEpisodeReward(), EpisodeTime()]
+            metrics += [EpisodeReturn(), RollingEpisodeReturn(), EpisodeTime()]
 
         # Metrics are just events that return a value when called
         callbacks.extend(metrics)
@@ -86,7 +86,7 @@ class AbstractAgent:
 
         # Logging templates
         self.step_end_template = None
-        self.episode_end_template = 'Episode {episode}: \tError: {total_error:.2f} \tReward: {EpisodeReward: .2f} RollingEpisodeReward: {RollingEpisodeReward50: .2f} Runtime: {EpisodeTime}'
+        self.episode_end_template = 'Episode {episode}: \tError: {total_error:.2f} \tReward: {episode_return: .2f} RollingEpisodeReward: {rolling_return: .2f} Runtime: {episode_time}'
 
     @property
     def name(self):
@@ -130,6 +130,7 @@ class AbstractAgent:
             if handler in dir(self):
                 handler = getattr(self, handler)
                 if event in dir(observer):
+                    t0 = getattr(observer, event)
                     handler += getattr(observer, event)
 
 
@@ -215,10 +216,7 @@ class AbstractAgent:
                     self._raise_step_start_event(s=s)
 
                     # Action replay.  We repeat the selected action for n steps.
-                    if len(action_buffer) == 0:
-                        action_buffer = [self.choose_action(s.reshape(1, -1))] * frame_skip
-
-                    a = action_buffer.pop()
+                    a = self.choose_action(s.reshape(1, -1))
 
                     # Accumulate reward
                     s_prime, r, episode_done, _ = self.env.step(a)
@@ -226,6 +224,15 @@ class AbstractAgent:
                     # Some environments return reward as an array, flatten into a float for consistency
                     if isinstance(r, np.ndarray):
                         r = np.sum(r)
+
+                    # Replay the selected action if necessary
+                    # Accumulate the reward from each action, but don't let the agent observe the intermediate states
+                    for _ in range(frame_skip - 1):
+                        if episode_done:
+                            break
+
+                        s_prime, r_new, episode_done, _ = self.env.step(a)
+                        r += r_new
 
                     self._status.action = a
                     self._status.step += 1
@@ -245,6 +252,17 @@ class AbstractAgent:
 
                     self._raise_step_end_event(s=s, s_prime=s_prime, a=a, r=r)
 
+                    self.__raise_train_start_event()
+
+                    stats = self._update_weights()
+                    assert isinstance(stats, dict) or stats is None, \
+                        'Value of {} returned by _update_weights() is not a dictionary or None'.format(stats)
+
+                    if stats is not None:
+                        self._status.update(stats)
+
+                    self.__raise_train_end_event()
+
                     s = s_prime
 
 
@@ -260,6 +278,13 @@ class AbstractAgent:
                 gym.upload(monitor_path, api_key=self.api_key)
                 rmtree(monitor_path) # Cleanup the temp dir
 
+    def _update_weights(self):
+        """
+        Called after the end of each step to allow the agent to perform any training updates.
+
+        :return:  A dictionary of values to be added to _status or None
+        """
+        raise NotImplementedError
 
     def __raise_event(self, event, **kwargs):
         # Ensure status information is passed to eventhandlers
