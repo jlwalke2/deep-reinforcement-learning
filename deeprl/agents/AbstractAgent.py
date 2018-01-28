@@ -18,9 +18,9 @@ logger = logging.getLogger(__name__)
 # TODO: Generate static initial experiences, states, etc for use in virtual batch normalization and q-value plots
 
 
-
-_AGENT_EVENTS = ['on_episode_start', 'on_episode_end', 'on_step_start', 'on_step_end', 'on_train_start',
-                      'on_train_end']
+"""Names of the events that the agent will raise.  Functions on callbacks with these names will be auto-wired up."""
+_AGENT_EVENTS = {'on_episode_start', 'on_episode_end', 'on_step_start', 'on_step_end', 'on_train_start',
+                      'on_train_end', 'on_execution_start', 'on_execution_end', 'on_warmup_start', 'on_warmup_end'}
 
 
 class Status(dict):
@@ -78,6 +78,8 @@ class AbstractAgent:
 
     def __init__(self, env, policy=None, memory=None, max_steps_per_episode=0, history=None, metrics=[], callbacks=[], name: str =None, api_key: str =None):
         self.name = name or self.__class__.__name__
+
+        """Names of metrics that the agent computes directly and publishes.  This is in addition to any metrics returned by callbacks."""
         self._metric_names = {'episode','render','episode_done','reward','action','step','total_steps'}
         self.env = env
         self.policy = policy
@@ -107,12 +109,16 @@ class AbstractAgent:
                 self.history = history[0]
 
         # Setup event handlers for callbacks and metrics
+        self.execution_start = EventHandler()
+        self.warmup_start = EventHandler()
+        self.warmup_end = EventHandler()
         self.episode_start = EventHandler()
-        self.episode_end = EventHandler()
         self.step_start = EventHandler()
         self.step_end = EventHandler()
         self.train_start = EventHandler()
         self.train_end = EventHandler()
+        self.episode_end = EventHandler()
+        self.execution_end = EventHandler()
 
         # Automatically hook up any events
         for observer in [self, self.policy, self.memory, logger] + callbacks:
@@ -203,13 +209,41 @@ class AbstractAgent:
         '''
         return (s, a, r, s_prime, episode_done)
 
-    def test(self, max_episode: int =500, frame_skip: int =4, render_every_n: int =1):
-        pass
+    def test(self, num_episodes, frame_skip: int =1, render_every_n: int = 1, upload=False):
+        # TODO: save & restore memory, history, callbacks, status
+
+        self._exec_loop(num_episodes=num_episodes,
+                        frame_skip=frame_skip,
+                        warmup_steps=0,
+                        render_every_n=render_every_n,
+                        upload=upload,
+                        train=False)
 
     def train(self, max_episodes: int =500, steps_before_training: int =None, frame_skip: int =4, render_every_n: int =0, upload: bool =False):
         """Train the agent in the environment for a specified number of episodes.
 
         :param max_episodes: Terminate training after this many new episodes are observed
+        :param steps_before_training: Individual steps to take in the environment before training begins
+        :param frame_skip:  Agent will only observe every n states.  The previously selected action will be used for all unobserved states.
+        :param render_every_n: Render every nth episode
+        :param upload: Upload training results to OpenAI Gym site?
+        """
+
+        # Unless otherwise specified, assume training doesn't start until a full sample of steps is observed
+        if steps_before_training is None:
+            steps_before_training = self.memory.sample_size
+
+        self._exec_loop(num_episodes=max_episodes,
+                        frame_skip=frame_skip,
+                        warmup_steps=steps_before_training,
+                        render_every_n=render_every_n,
+                        upload=upload,
+                        train=True)
+
+    def _exec_loop(self, num_episodes: int, frame_skip: int, warmup_steps: int, render_every_n: int, train: bool, upload: bool):
+        """Train the agent in the environment for a specified number of episodes.
+
+        :param num_episodes: Terminate training after this many new episodes are observed
         :param steps_before_training: Individual steps to take in the environment before training begins
         :param render_every_n: Render every nth episode
         :param upload: Upload training results to OpenAI Gym site?
@@ -219,23 +253,23 @@ class AbstractAgent:
         # TODO: wire & unwire events
 
         self._status = self._build_status()
+        self._raise_execution_start_event()
 
         if upload:
             assert self.api_key, 'An API key must be specified before uploading training results.'
             monitor_path = mkdtemp()
             self.env = gym.wrappers.Monitor(self.env, monitor_path)
 
-        # Unless otherwise specified, assume training doesn't start until a full sample of steps is observed
-        if steps_before_training is None:
-            self.steps_before_training = self.memory.sample_size
+        self._raise_warmup_start_event()
 
         # If 0 or None is passed, disable rendering
         if not render_every_n:
-            render_every_n = max_episodes + 1
+            render_every_n = num_episodes + 1
         try:
             self._status.total_steps = 0
 
-            for episode_count in range(1, max_episodes + 1):
+            for episode_count in range(1, num_episodes + 1):
+
                 self._status.episode = episode_count
                 self._status.render  = episode_count % render_every_n == 0
                 self._status.episode_done = False
@@ -245,9 +279,12 @@ class AbstractAgent:
                 self._raise_episode_start_event()
 
                 s = self.env.reset()  # Get initial state observation
-                action_buffer = []
 
                 while not self._status.episode_done:
+                    # End the warmup period as soon as the required number of steps have been taken
+                    if self._status.total_steps == warmup_steps:
+                        self._raise_warmup_end_event()
+
                     s = np.asarray(s)
 
                     self._raise_step_start_event(s=s)
@@ -292,16 +329,18 @@ class AbstractAgent:
 
                     self._raise_step_end_event(s=s, s_prime=s_prime, a=a, r=r)
 
-                    self.__raise_train_start_event()
+                    # Train the agent's model(s) if necessary
+                    if train:
+                        self._raise_train_start_event()
 
-                    stats = self._update_weights()
-                    assert isinstance(stats, dict) or stats is None, \
-                        'Value of {} returned by _update_weights() is not a dictionary or None'.format(stats)
+                        stats = self._update_weights()
+                        assert isinstance(stats, dict) or stats is None, \
+                            'Value of {} returned by _update_weights() is not a dictionary or None'.format(stats)
 
-                    if stats is not None:
-                        self._status.update(stats)
+                        if stats is not None:
+                            self._status.update(stats)
 
-                    self.__raise_train_end_event()
+                        self._raise_train_end_event()
 
                     s = s_prime
 
@@ -317,6 +356,12 @@ class AbstractAgent:
             if upload:
                 gym.upload(monitor_path, api_key=self.api_key)
                 rmtree(monitor_path) # Cleanup the temp dir
+
+            self._raise_execution_end_event()
+
+
+
+
 
     def _update_weights(self):
         """
@@ -348,12 +393,32 @@ class AbstractAgent:
     def _raise_step_end_event(self, **kwargs):
         self.__raise_event(self.step_end, **kwargs)
 
-    def __raise_train_start_event(self, **kwargs):
+    def _raise_train_start_event(self, **kwargs):
         self.__raise_event(self.train_start, **kwargs)
 
-    def __raise_train_end_event(self, **kwargs):
+    def _raise_train_end_event(self, **kwargs):
         self.__raise_event(self.train_end, **kwargs)
 
+    def _raise_execution_start_event(self, **kwargs):
+        self.__raise_event(self.execution_start, **kwargs)
+
+    def _raise_execution_end_event(self, **kwargs):
+        self.__raise_event(self.execution_end, **kwargs)
+
+    def _raise_warmup_start_event(self, **kwargs):
+        self.__raise_event(self.warmup_start, **kwargs)
+
+    def _raise_warmup_end_event(self, **kwargs):
+        self.__raise_event(self.warmup_end, **kwargs)
+
+    def on_warmup_start(self, **kwargs):
+        pass
+
+    def on_warmup_end(self, **kwargs):
+        pass
+
+    def on_step_start(self, **kwargs):
+        pass
 
     def on_step_end(self, **kwargs):
         logger.debug(self._status)
@@ -361,7 +426,15 @@ class AbstractAgent:
         if self.step_end_template:
             logger.info(self.step_end_template.format(**kwargs))
 
+    def on_episode_start(self, **kwargs):
+        pass
+
     def on_episode_end(self, **kwargs):
         if self.episode_end_template:
             logger.info(self.episode_end_template.format(**kwargs))
 
+    def on_execution_start(self, **kwargs):
+        pass
+
+    def on_execution_end(self, **kwargs):
+        pass

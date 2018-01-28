@@ -7,6 +7,15 @@ from warnings import warn
 import matplotlib.pyplot as plt
 from matplotlib import animation
 
+def unwrap_model(model):
+    """Extract the underlying Model instance from a Keras class."""
+
+    # Keras Sequential models have an underlying Model object with the correct input/output tensors.
+    if hasattr(model, 'model'):
+        model = model.model
+
+    return model
+
 def keras2dict(model):
     assert isinstance(model, keras.models.Model)
 

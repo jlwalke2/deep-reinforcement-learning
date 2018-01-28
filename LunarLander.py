@@ -6,6 +6,8 @@ from keras.optimizers import rmsprop
 from deeprl.memories import PrioritizedMemory, Memory
 from deeprl.policies import EpsilonGreedyPolicy, BoltzmannPolicy
 from deeprl.utils import set_seed, animated_plot
+import deeprl.utils.metrics as metrics
+
 import logging
 
 logger = logging.getLogger()
@@ -46,9 +48,12 @@ policy = BoltzmannPolicy()
 agent = DoubleDeepQAgent(env=env, model=model, policy=policy, memory=memory, gamma=0.99, max_steps_per_episode=500)
 #agent.preprocess_state = shape_reward
 
-plt, anim = animated_plot(agent.history.get_episode_metrics, ['EpisodeReward'])
-plt.show(block=False)
-agent.train(target_model_update=1e-3, max_episodes=1000, render_every_n=50)
+#plt, anim = animated_plot(agent.history.get_episode_metrics, ['EpisodeReward'])
+#plt.show(block=False)
+#agent.train(target_model_update=1e-3, max_episodes=1000, render_every_n=1)
+
+agent.train(target_model_update=1e-3, max_episodes=1000, render_every_n=0)
+agent.test(num_episodes=10, render_every_n=1)
 
 df = agent.history.get_episode_metrics()
 df.to_csv('lunar_lander.csv')

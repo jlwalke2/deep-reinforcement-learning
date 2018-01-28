@@ -149,13 +149,14 @@ class PrioritizedMemory(Memory):
         return states, actions, rewards, s_primes, flags
 
     def on_train_end(self, *args, **kwargs):
-        if 'delta' in kwargs:
+        if 'delta' in kwargs and kwargs['delta'] is not None:
             assert self.last_sample is not None
 
             self.buffer[self.last_sample, -1] = np.abs(kwargs['delta'])
 
     def on_calculate_error(self, *args, **kwargs):
 
+        # TODO: Fix.  Not currently hooked up (on_calculate_error removed)
         delta = kwargs['target'] - kwargs['estimate']
         p = delta.sum(axis=-1) # Sum along rows since q-values only differ for the action taken
         p = np.power(np.abs(p) + self.epsilon, self.alpha)

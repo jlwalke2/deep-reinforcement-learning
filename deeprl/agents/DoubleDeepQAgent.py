@@ -1,21 +1,30 @@
 import gym
 import numpy as np
-from ..utils.misc import keras2dict, dict2keras
+from ..utils.misc import keras2dict, dict2keras, unwrap_model
 from .DeepQAgent import DeepQAgent
 import logging
-
+import keras.callbacks
 logger = logging.getLogger(__name__)
+
+import keras.callbacks
+tensorboard = keras.callbacks.TensorBoard(write_grads=True, write_images=True)
 
 class DoubleDeepQAgent(DeepQAgent):
     def __init__(self, **kwargs):
         super(DoubleDeepQAgent, self).__init__(**kwargs)
+        self._tensorboard_callback = keras.callbacks.TensorBoard(histogram_freq=1, write_grads=True)
+        self._tensorboard_callback.set_model(unwrap_model(self.model))
+
+        # Additional metric values that this agent will set
+        self._metric_names.update({'error','delta', 'qvalues'})
 
         # Create the target model.  Same architecture as DeepQ agent, but separate weights
         self.target_model = self._clone_model(self.model)
 
     def choose_action(self, state):
         q_values = self.model.predict_on_batch(state)
-        logger.debug('S: {}  Q(s): {}'.format(state, q_values))
+        self._status['qvalues'] = q_values
+
         assert np.any(np.isnan(q_values)) == False, 'Q-Values may not be NaN: {}'.format(q_values)
 
         return self.policy(q_values)
@@ -68,8 +77,6 @@ class DoubleDeepQAgent(DeepQAgent):
         assert rewards.shape == (n, 1)
         assert flags.shape == (n, 1)
 
-#        self.train_start(num_samples=n, s=states, a=actions, r=rewards, s_prime=s_primes, episode_done=flags)
-
         # Double Deep Q-Learning
         # Use online model to pick best action from s'
         s_prime_actions = self.model.predict_on_batch(s_primes)
@@ -92,35 +99,11 @@ class DoubleDeepQAgent(DeepQAgent):
         targets = estimate.copy()
         targets[range(n), actions.astype('int32').ravel()] = updated_targets[:, 0] + 1e-10 # Add small epsilon to avoid 0 error
 
-        #self.calculate_error(target=targets, estimate=estimate)
-
         diff = targets[range(n), actions.astype('int32').ravel()] - updated_targets[:, 0]
-        # targets[range(n), actions.astype('int32').ravel()] = updated_targets[:, 0]
 
         error = self.model.train_on_batch(states, targets)
 
         return dict(total_error=error, delta=diff)
-
-#        self.train_end(num_samples=n, s=states, a=actions, r=rewards, s_prime=s_primes, episode_done=flags,
-#                       target=targets, delta=diff, error=error)
-
-
-    # def _raise_step_end_event(self, **kwargs):
-    #     assert self._status.episode is not None
-    #     assert 'total_steps' in self._status
-    #
-    #     # Hard update of target model weights every N steps
-    #     if self._status.total_steps % self._target_model_update == 0:
-    #         self._update_target_model()
-    #     elif self._target_model_update < 1:
-    #         # Soft weight update after every step
-    #         self._update_target_model(self._target_model_update)
-    #
-    #     # Train model
-    #     if self._status.total_steps > self._steps_before_training:
-    #         error = self._update_weights()
-    #
-    #     super(DoubleDeepQAgent, self)._raise_step_end_event(**kwargs)
 
 
     def __getstate__(self):
@@ -130,11 +113,6 @@ class DoubleDeepQAgent(DeepQAgent):
         state['model'] = keras2dict(self.model)
         state['target_model'] = keras2dict(self.target_model)
         state['env'] = self.env.spec.id
-
-        # TODO: handle objects with loggers
-        for key in ['logger']:
-            if key in state:
-                del state[key]
 
         return state
 
@@ -151,4 +129,38 @@ class DoubleDeepQAgent(DeepQAgent):
         # Restore everything else
         self.__dict__.update(state)
 
+    def on_execution_start(self, **kwargs):
+        super().on_execution_start(**kwargs)
+        self._tensorboard_callback.on_train_begin()
 
+    def on_warmup_start(self, **kwargs):
+        self._warmup = True
+        self._warmup_states = []
+        self._warmup_qvalues = []
+
+    def on_warmup_end(self, **kwargs):
+        self._warmup = False
+
+        input = np.asarray(self._warmup_states).reshape((-1, self.num_features))
+        output = np.asarray(self._warmup_qvalues).reshape((-1, self.num_actions))
+        sample_weights = np.ones(input.shape[0])
+
+        self._tensorboard_callback.validation_data = [input, output, sample_weights]
+
+    def on_step_end(self, **kwargs):
+        super().on_step_end(**kwargs)
+
+        if self._warmup:
+            self._warmup_states.append(kwargs['s'])
+            self._warmup_qvalues.append(kwargs['qvalues'])
+
+    def on_episode_end(self, **kwargs):
+        super().on_episode_end(**kwargs)
+
+        if not self._warmup:
+            self._tensorboard_callback.on_epoch_end(kwargs['episode'])
+
+    def on_execution_end(self, **kwargs):
+        super().on_execution_end(**kwargs)
+
+        self._tensorboard_callback.on_train_end()
