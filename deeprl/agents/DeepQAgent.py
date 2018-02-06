@@ -1,11 +1,10 @@
-from .AbstractAgent import AbstractAgent
+from .abstract import AbstractAgent
 
 
 class DeepQAgent(AbstractAgent):
-    def __init__(self, model, gamma=0.9, *args, **kwargs):
+    def __init__(self, model, *args, **kwargs):
         super(DeepQAgent, self).__init__(*args, **kwargs)
         self.model = model
-        self.gamma = gamma
         self.preprocess_steps = []
 
 

@@ -1,4 +1,4 @@
-from .AbstractAgent import AbstractAgent
+from .abstract import AbstractAgent
 from ..utils.async import ModelManager
 from deeprl.memories import TrajectoryMemory
 import gym
