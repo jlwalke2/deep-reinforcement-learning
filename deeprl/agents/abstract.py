@@ -9,6 +9,7 @@ from abc import ABCMeta, abstractmethod
 from collections import namedtuple
 from ..utils import History, EventHandler
 from ..utils.metrics import EpisodeReturn, RollingEpisodeReturn, EpisodeTime
+from PIL import Image
 
 Step = namedtuple('Step', ['s','a','r','s_prime','is_terminal'])
 logger = logging.getLogger(__name__)
@@ -16,6 +17,7 @@ logger = logging.getLogger(__name__)
 # TODO: Reconcile logging teplates with metric names
 # TODO: Change exploration episodes to exploration steps?
 # TODO: Generate static initial experiences, states, etc for use in virtual batch normalization and q-value plots
+# TODO: Use env.render(mode='rgb_array') to render output to numpy array and save as img.  Check render.modes in env.metadata?
 
 
 """Names of the events that the agent will raise.  Functions on callbacks with these names will be auto-wired up."""
@@ -76,12 +78,13 @@ class AbstractAgent:
 
 
 
-    def __init__(self, env, policy=None, memory=None, max_steps_per_episode=0, history=None, metrics=[], callbacks=[], name: str =None, api_key: str =None):
+    def __init__(self, env, gamma=0.9, policy=None, memory=None, max_steps_per_episode=0, history=None, metrics=[], callbacks=[], name: str =None, api_key: str =None):
         self.name = name or self.__class__.__name__
 
         """Names of metrics that the agent computes directly and publishes.  This is in addition to any metrics returned by callbacks."""
         self._metric_names = {'episode','render','episode_done','reward','action','step','total_steps'}
         self.env = env
+        self.gamma = gamma
         self.policy = policy
         self.memory = memory
         self.max_steps_per_episode = max_steps_per_episode
@@ -265,11 +268,12 @@ class AbstractAgent:
         # If 0 or None is passed, disable rendering
         if not render_every_n:
             render_every_n = num_episodes + 1
+
         try:
             self._status.total_steps = 0
 
             for episode_count in range(1, num_episodes + 1):
-
+                # Initial counters for the episode
                 self._status.episode = episode_count
                 self._status.render  = episode_count % render_every_n == 0
                 self._status.episode_done = False
@@ -295,7 +299,7 @@ class AbstractAgent:
 
                     # Replay the selected action as necessary
                     # Accumulate the reward from each action, but don't let the agent observe the intermediate states
-                    for _ in range(frame_skip):
+                    for i in range(frame_skip):
                         if self._status.render:
                             self.env.render()
 
@@ -306,7 +310,8 @@ class AbstractAgent:
                         if isinstance(r_new, np.ndarray):
                             r_new = np.sum(r_new)
 
-                        r += r_new
+                        # Discount the reward received by taking each action, after the first.
+                        r += r_new * np.power(self.gamma, i)
 
                         if episode_done:
                             break
@@ -315,7 +320,6 @@ class AbstractAgent:
                     self._status.step += 1
                     self._status.reward = r
                     self._status.total_steps += 1
-                    self._status.reward = r
 
                     s, a, r, s_prime, episode_done = self.preprocess_state(s, a, r, s_prime, episode_done)
                     self._status.episode_done = episode_done
