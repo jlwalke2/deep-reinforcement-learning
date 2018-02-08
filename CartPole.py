@@ -28,7 +28,7 @@ policy = BoltzmannPolicy()
 
 
 agent = DoubleDeepQAgent(env=env, model=model, policy=policy, memory=memory, gamma=0.99,
-                         metrics=[EpisodeReward(), RollingEpisodeReward(), CumulativeReward()],
+                         metrics=[EpisodeReturn(), RollingEpisodeReturn(), CumulativeReward(), EpisodeTime()],
                          max_steps_per_episode=500)
 
 plt, anim = animated_plot(agent.history.get_episode_metrics, ['EpisodeReward', 'RollingEpisodeReward50'])

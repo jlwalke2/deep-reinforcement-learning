@@ -92,6 +92,18 @@ class AbstractAgent:
         self.num_features = AbstractAgent._get_space_size(env.observation_space)
         self.api_key = api_key
 
+        # Setup event handlers for callbacks and metrics
+        self.execution_start = EventHandler()
+        self.warmup_start = EventHandler()
+        self.warmup_end = EventHandler()
+        self.episode_start = EventHandler()
+        self.step_start = EventHandler()
+        self.step_end = EventHandler()
+        self.train_start = EventHandler()
+        self.train_end = EventHandler()
+        self.episode_end = EventHandler()
+        self.execution_end = EventHandler()
+
         # Setup default metrics if none were provided
         if len(metrics) == 0:
             metrics += [EpisodeReturn(), RollingEpisodeReturn(), EpisodeTime()]
@@ -111,21 +123,13 @@ class AbstractAgent:
             else:
                 self.history = history[0]
 
-        # Setup event handlers for callbacks and metrics
-        self.execution_start = EventHandler()
-        self.warmup_start = EventHandler()
-        self.warmup_end = EventHandler()
-        self.episode_start = EventHandler()
-        self.step_start = EventHandler()
-        self.step_end = EventHandler()
-        self.train_start = EventHandler()
-        self.train_end = EventHandler()
-        self.episode_end = EventHandler()
-        self.execution_end = EventHandler()
-
         # Automatically hook up any events
-        for observer in [self, self.policy, self.memory, logger] + callbacks:
+        for observer in [self, self.policy, self.memory] + callbacks:
             self.wire_events(observer)
+
+
+
+
 
         # Logging templates
         self.step_end_template = None
@@ -171,8 +175,13 @@ class AbstractAgent:
             if handler in dir(self):
                 handler = getattr(self, handler)
                 if event in dir(observer):
-                    t0 = getattr(observer, event)
                     handler += getattr(observer, event)
+
+
+    def add_callbacks(self, callbacks):
+        pass
+
+
 
 
     @abstractmethod

@@ -27,7 +27,7 @@ def build_agent_no_shaping():
     agent = DoubleDeepQAgent(name='AgentNoShaping', env=env, model=model,
                              policy=EpsilonGreedyPolicy(min=0.05, max=0.5, decay=0.999),
                              memory=PrioritizedMemory(maxlen=50000),
-                             metrics=[EpisodeReward(), RollingEpisodeReward(), CumulativeReward(), EpisodeTime()],
+                             metrics=[EpisodeReturn(), RollingEpisodeReturn(), CumulativeReward(), EpisodeTime()],
                              gamma=0.99, max_steps_per_episode=1000)
 
     return agent
@@ -64,7 +64,7 @@ def build_agent_with_shaping():
     agent = DoubleDeepQAgent(name='AgentWithShaping', env=env, model=model,
                              policy=EpsilonGreedyPolicy(min=0.05, max=0.5, decay=0.999),
                              memory=PrioritizedMemory(maxlen=50000),
-                             metrics=[EpisodeReward(), RollingEpisodeReward(), CumulativeReward(), EpisodeTime()],
+                             metrics=[EpisodeReturn(), RollingEpisodeReturn(), CumulativeReward(), EpisodeTime()],
                              gamma=0.99, max_steps_per_episode=1000)
     agent.preprocess_state = shape_reward
 

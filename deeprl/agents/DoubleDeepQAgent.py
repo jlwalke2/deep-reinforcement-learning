@@ -157,10 +157,12 @@ class DoubleDeepQAgent(DeepQAgent):
     def on_episode_end(self, **kwargs):
         super().on_episode_end(**kwargs)
 
+        # Save metrics for TensorBoard
         if not self._warmup:
             self._tensorboard_callback.on_epoch_end(kwargs['episode'])
 
     def on_execution_end(self, **kwargs):
         super().on_execution_end(**kwargs)
 
+        # Close file handles
         self._tensorboard_callback.on_train_end()

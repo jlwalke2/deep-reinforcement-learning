@@ -16,7 +16,7 @@ num_actions = env.action_space.shape[0]
 actor = Sequential([
     Dense(16, input_dim=num_features, activation='relu'),
     Dense(16, activation='relu'),
-    Dense(units=num_actions, activation='linear')
+    Dense(units=num_actions, activation='sigmoid')
 ])
 actor.compile(loss='mse', optimizer=rmsprop(lr=0.0016, decay=0.000001))
 

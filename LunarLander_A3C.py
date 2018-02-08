@@ -1,5 +1,5 @@
 import gym
-from deeprl.agents.A3CAgent import A3CAgent
+from deeprl.agents.ac3 import A3CAgent
 import keras.backend as K
 from keras.layers import Dense, Flatten, Input, concatenate
 from keras.models import Sequential, Model

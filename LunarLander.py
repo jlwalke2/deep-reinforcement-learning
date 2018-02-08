@@ -26,7 +26,7 @@ model = Sequential([
     Dense(64, activation='relu'),
     Dense(units=num_actions, activation='linear')
 ])
-model.compile(loss='mse', optimizer=rmsprop(lr=0.0016, decay=0.000001))
+model.compile(loss='mse', optimizer=rmsprop(lr=0.0016, decay=0.000001, clipnorm=1.))
 
 def shape_reward(*args):
     s, a, r, s_prime, done = args
