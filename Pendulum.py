@@ -1,5 +1,5 @@
 import gym
-from deeprl.agents.ActorCriticAgent import ActorCriticAgent
+from deeprl.agents.ddpg import ActorCriticAgent
 from keras.layers import Dense, Input, concatenate
 from keras.models import Sequential, Model
 from keras.optimizers import rmsprop

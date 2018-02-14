@@ -1,5 +1,5 @@
 import gym
-from deeprl.agents.ActorCriticAgent import ActorCriticAgent
+from deeprl.agents.ddpg import ActorCriticAgent
 import keras.backend as K
 from keras.layers import Dense, Input
 from keras.models import Sequential, Model
@@ -9,9 +9,13 @@ from deeprl.utils.metrics import InitialStateValue
 
 import logging
 logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 if len(logger.handlers) > 0:
     logger.handlers[0].setLevel(logging.INFO)
+
+fileHandler = logging.FileHandler('logs/lunarlander_ac.log')
+fileHandler.setLevel(logging.DEBUG)
+logger.addHandler(fileHandler)
 
 env = gym.make('LunarLander-v2')
 
@@ -42,18 +46,18 @@ def actor_loss(y_true, y_pred):
 # critic.compile(loss='mse', optimizer=rmsprop(lr=0.0016, decay=0.000001, clipnorm=0.001))
 
 actor = Sequential([
-    Dense(64, input_dim=num_features, activation='relu'),
-    Dense(64, activation='relu'),
+    Dense(16, input_dim=num_features, activation='relu'),
+    Dense(16, activation='relu'),
     Dense(units=num_actions, activation='softmax')
 ])
-actor.compile(loss=actor_loss, optimizer=sgd(lr=1e-13)) # rmsprop(lr=0.0016, decay=0.000001, clipnorm=0.5))
+actor.compile(loss=actor_loss, optimizer=rmsprop(lr=0.0016, decay=0.000001)) #optimizer=sgd(lr=1e-13))
 
 critic = Sequential([
-    Dense(64, input_dim=num_features, activation='relu'),
-    Dense(64, activation='relu'),
+    Dense(16, input_dim=num_features, activation='relu'),
+    Dense(16, activation='relu'),
     Dense(units=1, activation='linear')
 ])
-critic.compile(loss='mse', optimizer=sgd(lr=1e-13)) #  rmsprop(lr=0.0016, decay=0.000001, clipnorm=0.001))
+critic.compile(loss='mse', optimizer=rmsprop(lr=0.0016, decay=0.000001))  #sgd(lr=1e-13))
 
 
 memory = PrioritizedMemory(maxlen=50000, sample_size=32)
