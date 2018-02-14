@@ -7,7 +7,7 @@ import numpy as np
 
 from ..utils.misc import unwrap_model
 
-# A3C https://arxiv.org/pdf/1602.01783.pdf
+
 import logging
 
 logger = logging.getLogger(__name__)
@@ -49,7 +49,8 @@ class ActorCriticAgent(AbstractAgent):
         def loss(inputs):
             actions, mask, delta = inputs
 
-            return -1 * K.sum(K.log(actions + 1e-20) * mask, axis=-1) * delta
+            return -1 * K.sum(K.log(actions + 1e-20) * delta, axis=-1)
+#            return -1 * K.sum(K.log(actions + 1e-20) * mask, axis=-1) * delta
 
 
         loss_out = Lambda(loss, output_shape=(1,), name='LossCalc')([actions, mask, delta])
@@ -104,21 +105,23 @@ class ActorCriticAgent(AbstractAgent):
         assert rewards.shape == (self.memory.sample_size, 1)
         assert flags.shape == (self.memory.sample_size, 1)
 
-#        s_prime_val = self.critic.predict_on_batch(s_primes)                 # V(s')
         s_prime_val = self.critic_target.predict_on_batch(s_primes)                 # V(s')
         s_prime_val[flags.ravel()] = 0                                              # V(s') = 0 if s' is terminal
-        critic_target = rewards + self.gamma * s_prime_val                          # V(s)
+        critic_target = rewards + self.gamma * s_prime_val                          # V(s) = r + gamma * V(s')
+
+        critic_pred = self.critic_target.predict_on_batch(states)
+        delta = critic_target - critic_pred + 1e-20
+
         critic_error = self.critic.train_on_batch(states, critic_target)            # update critic weights
 
-        critic_pred = self.critic.predict_on_batch(states)
-        delta = critic_target - critic_pred + 1e-10
 
         mask = np.zeros((self.memory.sample_size, self.num_actions))
         mask[range(actions.shape[0]), actions.astype('int32').ravel()] = 1.0
 
         dummy_target = np.zeros_like(actions)
 
-        actor_error = self.trainable_actor.train_on_batch([states, mask, delta], dummy_target)
+        actor_error = self.trainable_actor.train_on_batch([states, mask, critic_target], dummy_target)
+        #actor_error = self.trainable_actor.train_on_batch([states, mask, delta], dummy_target)
         # pred = true - log(a)*(R-v)
 
         pass
