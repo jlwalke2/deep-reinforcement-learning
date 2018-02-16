@@ -66,11 +66,8 @@ class TensorBoardCallback(keras.callbacks.TensorBoard):
         self.writer.flush()
 
 
-        self.writer.flush()
-
-
-    def on_execution_end(self):
+    def on_execution_end(self, **kwargs):
         self.on_train_end()
 
-    def on_train_end(self, _):
+    def on_train_end(self, **kwargs):
         self.writer.close()

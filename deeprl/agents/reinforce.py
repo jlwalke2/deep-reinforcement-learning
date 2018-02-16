@@ -8,13 +8,13 @@ import warnings
 from .abstract import AbstractAgent
 from ..memories import TrajectoryMemory
 from ..utils.misc import unwrap_model
-
+from ..utils.callbacks import TensorBoardCallback
 
 logger = logging.getLogger(__name__)
 
 class ReinforceAgent(AbstractAgent):
 
-    def __init__(self, model, baseline=True, **kwargs):
+    def __init__(self, model, baseline=True, tensorboard=False, **kwargs):
         """
         Simple Statistical Gradient-Following Algorithms for Connectionist Reinforcement Learning, Williams 1992
         http://www-anw.cs.umass.edu/~barto/courses/cs687/williams92simple.pdf
@@ -44,6 +44,16 @@ class ReinforceAgent(AbstractAgent):
 
         self.model = model
         model = unwrap_model(model)
+
+        # Capture data for TensorBoard
+        if tensorboard:
+            if K.backend() != 'tensorflow':
+                raise RuntimeError(f'TensorBoard callbacks can only be used when Tensorflow is used as the Keras backend.  The current backend is {K.backend()}.')
+            tb = TensorBoardCallback(histogram_freq=1, write_grads=True)
+            # TODO: Must generate & set validation data or callback will fail
+
+            tb.set_model(model)
+            self.add_callbacks(tb)
 
         # Define a custom objective function to maximize
         def objective(action, mask, total_return):
