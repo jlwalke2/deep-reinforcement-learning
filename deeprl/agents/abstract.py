@@ -9,7 +9,6 @@ from abc import ABCMeta, abstractmethod
 from collections import namedtuple
 from ..utils import History, EventHandler
 from ..utils.metrics import EpisodeReturn, RollingEpisodeReturn, EpisodeTime
-from PIL import Image
 
 Step = namedtuple('Step', ['s','a','r','s_prime','is_terminal'])
 logger = logging.getLogger(__name__)
@@ -103,6 +102,8 @@ class AbstractAgent:
         self.train_end = EventHandler()
         self.episode_end = EventHandler()
         self.execution_end = EventHandler()
+        self.callbacks = set()
+
 
         # Setup default metrics if none were provided
         if len(metrics) == 0:
@@ -123,13 +124,7 @@ class AbstractAgent:
             else:
                 self.history = history[0]
 
-        # Automatically hook up any events
-        for observer in [self, self.policy, self.memory] + callbacks:
-            self.wire_events(observer)
-
-
-
-
+        self.add_callbacks([self, self.policy, self.memory] + callbacks)
 
         # Logging templates
         self.step_end_template = None
@@ -179,9 +174,13 @@ class AbstractAgent:
 
 
     def add_callbacks(self, callbacks):
-        pass
+        if not hasattr(callbacks, '__iter__'):
+            callbacks = [callbacks]
 
-
+        for callback in callbacks:
+            if callback not in self.callbacks:
+                self.wire_events(callback)
+                self.callbacks.add(callback)
 
 
     @abstractmethod
@@ -371,9 +370,6 @@ class AbstractAgent:
                 rmtree(monitor_path) # Cleanup the temp dir
 
             self._raise_execution_end_event()
-
-
-
 
 
     def _update_weights(self):
