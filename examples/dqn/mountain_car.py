@@ -4,7 +4,7 @@ from keras.layers import Dense
 from keras.models import Sequential
 from keras.optimizers import adam
 
-from deeprl.agents.DoubleDeepQAgent import DoubleDeepQAgent
+from deeprl.agents import DoubleDeepQAgent
 from deeprl.memories import PrioritizedMemory
 from deeprl.policies import EpsilonGreedyPolicy
 from deeprl.utils import animated_plot

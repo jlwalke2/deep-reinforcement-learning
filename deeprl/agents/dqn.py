@@ -1,13 +1,26 @@
 import gym
 import numpy as np
 from ..utils.misc import keras2dict, dict2keras, unwrap_model
-from .DeepQAgent import DeepQAgent
+from .abstract import AbstractAgent
 import logging
 import keras.callbacks
 logger = logging.getLogger(__name__)
 
-import keras.callbacks
 tensorboard = keras.callbacks.TensorBoard(write_grads=True, write_images=True)
+
+class DeepQAgent(AbstractAgent):
+    def __init__(self, model, *args, **kwargs):
+        super(DeepQAgent, self).__init__(*args, **kwargs)
+        self.model = model
+        self.preprocess_steps = []
+
+
+    def train(self, steps_before_training: int =None, **kwargs):
+        # Unless otherwise specified, assume training doesn't start until a full sample of steps is observed
+        self._steps_before_training = steps_before_training or self.memory.sample_size
+
+        super(DeepQAgent, self).train(**kwargs)
+
 
 class DoubleDeepQAgent(DeepQAgent):
     def __init__(self, **kwargs):
