@@ -1,5 +1,6 @@
 import logging
 import numpy as np
+import gym
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -7,6 +8,19 @@ logger.setLevel(logging.INFO)
 class AbstractPolicy():
     def __call__(self, *args, **kwargs):
         raise NotImplementedError
+
+
+class RandomPolicy(AbstractPolicy):
+    def __init__(self, env):
+        super().__init__()
+
+        self.env = env
+
+    def __call__(self, *args, **kwargs):
+        if isinstance(self.env.action_space, gym.spaces.Discrete):
+            return self.env.action_space.sample()
+        else:
+            raise TypeError(f'Action selection for action space of type {type(env.action_space)} is not defined.')
 
 
 class BoltzmannPolicy(AbstractPolicy):

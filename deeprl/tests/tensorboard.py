@@ -7,6 +7,7 @@ import tensorflow as tf
 from tensorflow.contrib.tensorboard.plugins import projector
 
 from ..memories import TrajectoryMemory
+from ..policies import RandomPolicy
 
 class Test(unittest.TestCase):
 
@@ -46,15 +47,11 @@ class Test(unittest.TestCase):
         memory = TrajectoryMemory(maxlen=sample_size)
         thumbnails = []
         s = env.reset()
+        policy = RandomPolicy(env)
 
         for step in range(sample_size * frame_skip):
             s = np.asarray(s)
-
-            if isinstance(env.action_space, gym.spaces.Discrete):
-                a = env.action_space.sample()
-            else:
-                raise TypeError(f'Action selection for action space of type {type(env.action_space)} is not defined.')
-
+            a = policy(s)
             s_prime, r, episode_done, _ = env.step(a)
 
             if step % frame_skip == 0:
@@ -90,16 +87,18 @@ class Test(unittest.TestCase):
 
         thumbnail_size = (50,50)
 
-        states, actions, rewards, s_primes, episode_done = self.random_sample(gym.make('LunarLander-v2'), 1000,
-                                                                              thumbnail_size=thumbnail_size,
-                                                                              sprite_file=sprite_file)
+        from ..utils.history import RandomSample
+        sample = RandomSample(gym.make('LunarLander-v2'))
+        sample.run(sample_size=1000, thumbnail_size=thumbnail_size)
 
         with open(metadata_file, 'w') as f:
             f.write('Action\tReward\n')
-            for i in range(actions.shape[0]):
-                f.write(f'{np.asscalar(actions[i])}\t{np.asscalar(rewards[i])}\n')
+            for i in range(sample.actions.shape[0]):
+                f.write(f'{np.asscalar(sample.actions[i])}\t{np.asscalar(sample.rewards[i])}\n')
 
-        tf_states = tf.Variable(states, name='States')
+        tf_states = tf.Variable(sample.states, name='States')
+
+        sample.sprite.save(sprite_file)
 
         with tf.Session() as sess:
             saver = tf.train.Saver([tf_states])
