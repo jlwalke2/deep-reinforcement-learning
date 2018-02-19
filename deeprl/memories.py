@@ -1,5 +1,7 @@
 import numpy as np
+from collections import namedtuple
 
+Memories = namedtuple('Step', ['states', 'actions', 'rewards', 's_primes', 'terminal'])
 
 class Memory():
     '''Experience replay buffer for reinforcement learning.
@@ -65,7 +67,7 @@ class Memory():
         s_primes = self.buffer[indx, self._field_splits[2]:self._field_splits[3]]
         flags = self.buffer[indx, self._field_splits[3]:].astype('bool_')
 
-        return states, actions, rewards, s_primes, flags
+        return Memories(states, actions, rewards, s_primes, flags)
 
 
     def __len__(self):
@@ -96,7 +98,7 @@ class TrajectoryMemory(Memory):
         # Overwrite existing rows with new rows instead of re-initializing buffer
         self.index = 0
 
-        return states, actions, rewards, s_primes, flags
+        return Memories(states, actions, rewards, s_primes, flags)
 
 
 
@@ -146,7 +148,7 @@ class PrioritizedMemory(Memory):
         s_primes = self.buffer[indx, self._field_splits[2]:self._field_splits[3]]
         flags = self.buffer[indx, self._field_splits[3]:self._field_splits[4]].astype('bool_')
 
-        return states, actions, rewards, s_primes, flags
+        return Memories(states, actions, rewards, s_primes, flags)
 
     def on_train_end(self, *args, **kwargs):
         if 'delta' in kwargs and kwargs['delta'] is not None:
