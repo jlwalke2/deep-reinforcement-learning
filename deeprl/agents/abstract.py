@@ -4,6 +4,7 @@ import numpy as np
 import logging
 from shutil import rmtree
 from tempfile import mkdtemp
+import keras.backend as K
 from keras.models import Model, Sequential
 from abc import ABCMeta, abstractmethod
 from collections import namedtuple
@@ -77,7 +78,8 @@ class AbstractAgent:
 
 
 
-    def __init__(self, env, gamma=0.9, policy=None, memory=None, max_steps_per_episode=0, history=None, metrics=[], callbacks=[], name: str =None, api_key: str =None):
+    def __init__(self, env, gamma=0.9, policy=None, memory=None, max_steps_per_episode=0, history=None, metrics=[],
+                 callbacks=[], name: str =None, api_key: str =None, tb_path: str = None):
         self.name = name or self.__class__.__name__
 
         """Names of metrics that the agent computes directly and publishes.  This is in addition to any metrics returned by callbacks."""
@@ -103,7 +105,7 @@ class AbstractAgent:
         self.episode_end = EventHandler()
         self.execution_end = EventHandler()
         self.callbacks = set()
-
+        self.tensorboard_path = tb_path
 
         # Setup default metrics if none were provided
         if len(metrics) == 0:
@@ -129,6 +131,17 @@ class AbstractAgent:
         # Logging templates
         self.step_end_template = None
         self.episode_end_template = 'Episode {episode}: \tError: {total_error:.2f} \tReward: {episode_return: .2f} RollingEpisodeReward: {rolling_return: .2f} Runtime: {episode_time}'
+
+    def _initialize(self):
+        """Perform any final initialization before the agent is executed."""
+
+        # Configure TensorBoard callbacks if requested
+        if self.tensorboard_path is not None:
+            if K.backend() != 'tensorflow':
+                raise RuntimeError('TensorBoard output is only available when using the Tensorflow backend.')
+
+            self._configure_tensorboard(self.tensorboard_path)
+
 
     @property
     def name(self):
@@ -165,7 +178,7 @@ class AbstractAgent:
 
     def wire_events(self, observer):
         for event in _AGENT_EVENTS:
-            handler = event.replace('on_', '')
+            handler = event.replace('on_', '', 1)
 
             if handler in dir(self):
                 handler = getattr(self, handler)
@@ -173,14 +186,14 @@ class AbstractAgent:
                     handler += getattr(observer, event)
 
 
-    def add_callbacks(self, callbacks):
-        if not hasattr(callbacks, '__iter__'):
-            callbacks = [callbacks]
+    def add_callbacks(self, observers):
+        if not hasattr(observers, '__iter__'):
+            observers = [observers]
 
-        for callback in callbacks:
-            if callback not in self.callbacks:
-                self.wire_events(callback)
-                self.callbacks.add(callback)
+        for observer in observers:
+            if observer not in self.callbacks:
+                self.wire_events(observer)
+                self.callbacks.add(observer)
 
 
     @abstractmethod
@@ -380,6 +393,9 @@ class AbstractAgent:
         """
         raise NotImplementedError
 
+    def _configure_tensorboard(self, path):
+        raise NotImplementedError()
+
     def __raise_event(self, event, **kwargs):
         # Ensure status information is passed to eventhandlers
         kwargs.update(self._status)
@@ -409,6 +425,9 @@ class AbstractAgent:
         self.__raise_event(self.train_end, **kwargs)
 
     def _raise_execution_start_event(self, **kwargs):
+        # Perform any delayed initialization steps
+        self._initialize()
+
         self.__raise_event(self.execution_start, **kwargs)
 
     def _raise_execution_end_event(self, **kwargs):

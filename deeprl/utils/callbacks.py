@@ -1,7 +1,14 @@
-import tensorflow as tf
+try:
+    import tensorflow as tf
+    from tensorflow.contrib.tensorboard.plugins import projector
+except ImportError:
+    pass
+
+import numpy as np
 import keras.callbacks
 import os.path
 from PIL import Image
+
 
 class SaveImageCallback():
     def __init__(self, env, frequency, path: str ='', **kwargs: 'Passed to PIL.Image.save.'):
@@ -25,6 +32,7 @@ class SaveImageCallback():
 
 
 class TensorBoardCallback(keras.callbacks.TensorBoard):
+
     def __init__(self, *args, **kwargs):
         super(TensorBoardCallback, self).__init__(*args, **kwargs)
 
@@ -32,6 +40,57 @@ class TensorBoardCallback(keras.callbacks.TensorBoard):
 
     def on_execution_start(self, **kwargs):
         super(TensorBoardCallback, self).on_train_begin()
+
+    def write_metadata(self, metadata: dict, filename: str):
+        with open(filename, 'w') as f:
+            # Write header row
+            keys = list(metadata.keys())
+            f.write('\t'.join(keys) + '\n')
+
+            for i in range(metadata[keys[0]].shape[0]):
+                row = '\t'.join([str(np.asscalar(metadata[k][i])) for k in keys]) + '\n'
+                f.write(row)
+
+    def add_embeddings(self, inputs, metadata: dict ={}, sprites: dict ={}):
+        """
+
+        :param inputs:
+        :param metadata: tf.Variable.name: {Label: values}
+        :param sprites:  tf.Variable.name: (image, thumbnail dimensions)
+        :return:
+        """
+        assert isinstance(metadata, dict)
+        assert isinstance(sprites, dict)
+
+        inputs = list(inputs)
+        self.saver = tf.train.Saver(inputs)
+
+        config = projector.ProjectorConfig()
+        for input in inputs:
+            assert isinstance(input, tf.Variable)
+            self.sess.run(input.initializer)
+            embedding = config.embeddings.add()
+            embedding.tensor_name = input.name
+            name = input.name.split(':')[0]  # Colons mess up file names
+
+            if input.name in metadata.keys():
+                embedding.metadata_path = os.path.join(os.path.realpath(self.log_dir), f'metadata_{name}_0.tsv')
+                self.write_metadata(metadata[input.name], embedding.metadata_path)
+
+            if input.name in sprites.keys():
+                assert len(sprites[input.name]) == 2, 'Must provide a tuple of size 2 containing the Image and thumbnail dimensions.'
+                embedding.sprite.image_path = os.path.join(os.path.realpath(self.log_dir), f'sprite_{name}.png')
+
+                t0 = sprites[input.name][0]
+                t0.save(embedding.sprite.image_path)
+                embedding.sprite.single_image_dim.extend(list(sprites[input.name][1]))
+                sprites[input.name][0].save(embedding.sprite.image_path)
+
+        projector.visualize_embeddings(self.writer, config)
+
+        self.saver.save(self.sess, os.path.join(os.path.realpath(self.log_dir), 'embeddings'))
+
+
 
     def on_episode_end(self, **kwargs):
         episode = kwargs.get('episode', None)
@@ -67,7 +126,9 @@ class TensorBoardCallback(keras.callbacks.TensorBoard):
 
 
     def on_execution_end(self, **kwargs):
-        self.on_train_end()
+        super().on_train_end() # Let Keras callback perform cleanup.
 
     def on_train_end(self, **kwargs):
-        self.writer.close()
+        # Keras parent class defiles on_train_end but it performs final cleanup and is intended to be called
+        # when execution is terminating.  Override and do nothing.
+        pass
