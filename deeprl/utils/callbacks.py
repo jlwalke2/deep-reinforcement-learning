@@ -74,20 +74,17 @@ class TensorBoardCallback(keras.callbacks.TensorBoard):
             name = input.name.split(':')[0]  # Colons mess up file names
 
             if input.name in metadata.keys():
-                embedding.metadata_path = os.path.join(os.path.realpath(self.log_dir), f'metadata_{name}_0.tsv')
+                embedding.metadata_path = os.path.join(os.path.realpath(self.log_dir), f'metadata_{name}.tsv')
                 self.write_metadata(metadata[input.name], embedding.metadata_path)
 
             if input.name in sprites.keys():
                 assert len(sprites[input.name]) == 2, 'Must provide a tuple of size 2 containing the Image and thumbnail dimensions.'
                 embedding.sprite.image_path = os.path.join(os.path.realpath(self.log_dir), f'sprite_{name}.png')
-
-                t0 = sprites[input.name][0]
-                t0.save(embedding.sprite.image_path)
                 embedding.sprite.single_image_dim.extend(list(sprites[input.name][1]))
                 sprites[input.name][0].save(embedding.sprite.image_path)
 
         projector.visualize_embeddings(self.writer, config)
-
+        self.embeddings = config.embeddings
         self.saver.save(self.sess, os.path.join(os.path.realpath(self.log_dir), 'embeddings'))
 
 
@@ -126,7 +123,7 @@ class TensorBoardCallback(keras.callbacks.TensorBoard):
 
 
     def on_execution_end(self, **kwargs):
-        super().on_train_end() # Let Keras callback perform cleanup.
+        super().on_train_end(None) # Let Keras callback perform cleanup.
 
     def on_train_end(self, **kwargs):
         # Keras parent class defiles on_train_end but it performs final cleanup and is intended to be called
