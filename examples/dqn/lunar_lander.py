@@ -33,7 +33,8 @@ memory = PrioritizedMemory(maxlen=50000, sample_size=32)
 policy = BoltzmannPolicy()
 #policy = EpsilonGreedyPolicy(min=0.1, decay=0.99, exploration_episodes=1)
 
-agent = DoubleDeepQAgent(env=env, model=model, policy=policy, memory=memory, gamma=0.99, max_steps_per_episode=500)
+agent = DoubleDeepQAgent(env=env, model=model, policy=policy, memory=memory, gamma=0.99,
+                         max_steps_per_episode=500, tb_path='tensorboard')
 
-agent.train(target_model_update=1e-3, max_episodes=500, render_every_n=0)
+agent.train(target_model_update=1e-3, max_episodes=100, render_every_n=0)
 agent.test(num_episodes=10, render_every_n=1)

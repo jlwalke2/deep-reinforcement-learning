@@ -136,7 +136,7 @@ class AbstractAgent:
         """Perform any final initialization before the agent is executed."""
 
         # Configure TensorBoard callbacks if requested
-        if self.tensorboard_path is not None:
+        if self._train and self.tensorboard_path is not None:
             if K.backend() != 'tensorflow':
                 raise RuntimeError('TensorBoard output is only available when using the Tensorflow backend.')
 
@@ -236,6 +236,8 @@ class AbstractAgent:
     def test(self, num_episodes, frame_skip: int =1, render_every_n: int = 1, upload=False):
         # TODO: save & restore memory, history, callbacks, status
 
+        self._train = False
+
         self._exec_loop(num_episodes=num_episodes,
                         frame_skip=frame_skip,
                         warmup_steps=0,
@@ -252,6 +254,8 @@ class AbstractAgent:
         :param render_every_n: Render every nth episode
         :param upload: Upload training results to OpenAI Gym site?
         """
+
+        self._train = True
 
         # Unless otherwise specified, assume training doesn't start until a full sample of steps is observed
         if steps_before_training is None:

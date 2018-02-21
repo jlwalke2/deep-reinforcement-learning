@@ -1,6 +1,5 @@
 import gym
 import numpy as np
-import keras.backend as K
 from ..utils.misc import keras2dict, dict2keras, unwrap_model
 from .abstract import AbstractAgent
 from ..utils.callbacks import TensorBoardCallback
@@ -70,16 +69,17 @@ class DoubleDeepQAgent(DeepQAgent):
         values = np.max(q_values, axis=1)  # V(s) = max_a Q(s, a)
         actions = np.argmax(q_values, axis=1)  # Best (greedy) action
 
-        metadata = {tf_states.name: dict(Value=values, Action=actions)}
+        self.tensorboard_metadata = {tf_states.name: dict(Value_0=values, Action_0=actions)}
         sprites = {tf_states.name: (self.validation_data.sprite, self.validation_data.thumbnail_size),
                    tf_q_values.name: (self.validation_data.sprite, self.validation_data.thumbnail_size)}
 
-        self._tensorboard_callback.add_embeddings([tf_states, tf_q_values], metadata, sprites)
+        self._tensorboard_callback.add_embeddings([tf_states, tf_q_values], self.tensorboard_metadata, sprites)
 
         input = self.validation_data.states
         output = q_values
         sample_weights = np.ones(input.shape[0])
         self._tensorboard_callback.validation_data = [input, output, sample_weights]
+
 
     def _update_target_model(self, ratio=None):
         if ratio:
@@ -152,20 +152,19 @@ class DoubleDeepQAgent(DeepQAgent):
 
 
     def on_execution_end(self, **kwargs):
-        if K.backend() == 'tensorflow' and hasattr(self, 'validation_data'):
-            import tensorflow as tf
-            import os
-
+        if self._train and hasattr(self, 'tensorboard_metadata'):
+            # Get new q-value estimates for states
             q_values = self.model.predict_on_batch(self.validation_data.states)
-            tf_states = tf.Variable(self.validation_data.states, name='States_1')
+            values = np.max(q_values, axis=1)       # V(s) = max_a Q(s, a)
+            actions = np.argmax(q_values, axis=1)   # Best (greedy) action
 
-            values = np.max(q_values, axis=1)  # V(s) = max_a Q(s, a)
-            actions = np.argmax(q_values, axis=1)  # Best (greedy) action
+            for embedding in self._tensorboard_callback.embeddings:
+                name = embedding.tensor_name
+                if name in self.tensorboard_metadata:
+                    metadata = self.tensorboard_metadata[name]
+                    metadata.update(dict(Value_1=values, Action_1=actions))
+                    self._tensorboard_callback.write_metadata(metadata, embedding.metadata_path)
 
-            metadata = {tf_states.name: dict(Value=values, Action=actions)}
-            sprites = {tf_states.name: (self.validation_data.sprite, self.validation_data.thumbnail_size)}
-
-            self._tensorboard_callback.add_embeddings([tf_states], metadata, sprites)
 
     def __getstate__(self):
         state = self.__dict__.copy()
