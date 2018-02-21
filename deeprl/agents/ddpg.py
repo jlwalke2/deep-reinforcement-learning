@@ -1,11 +1,11 @@
+import gym
 import keras.backend as K
-from ..utils.callbacks import TensorBoardCallback
-from keras.models import Model, Sequential, Input
+from keras.models import Model, Input
 from keras.layers import Lambda
-from .abstract import AbstractAgent
 import numpy as np
 
-from ..utils.misc import unwrap_model
+from .abstract import AbstractAgent
+from ..utils.misc import unwrap_model, RandomSample
 
 
 import logging
@@ -15,7 +15,8 @@ np.seterr('raise')
 
 class ActorCriticAgent(AbstractAgent):
     def __init__(self, actor, critic, **kwargs):
-
+        """ http://www-anw.cs.umass.edu/~barto/courses/cs687/williams92simple.pdf
+        """
         super(ActorCriticAgent, self).__init__(**kwargs)
 
 #        assert len(critic.input) == 2, 'Critic model must take two inputs: state and action.'
@@ -30,13 +31,72 @@ class ActorCriticAgent(AbstractAgent):
         self.critic = critic
         self.critic_target = self._clone_model(self.critic)
 
-        self.actor_tensorboard = TensorBoardCallback('tensorboard/ac/actor', histogram_freq=1, write_grads=True)
+    def _configure_tensorboard(self, path):
+        from ..utils.callbacks import TensorBoardCallback
+
+        self.validation_data = RandomSample(gym.make(self.env.spec.id))
+        self.validation_data.run(sample_size=1000, thumbnail_size=(100, 75))
+
+        self.actor_tensorboard = TensorBoardCallback(path + '/actor', histogram_freq=1, write_grads=True)
         self.actor_tensorboard.set_model(unwrap_model(self.actor))
+        self.actor_tensorboard.validation_data
         self.actor_tensorboard.scalars += ['step', 'rolling_return']
+        self.add_callbacks(self.actor_tensorboard)
+
+        input = self.validation_data.states
+        actions = self.actor.predict_on_batch(self.validation_data.states)
+        sample_weights = np.ones(input.shape[0])
+        self.actor_tensorboard.validation_data = [input, actions, sample_weights]
+
+
+
+        # q_values = self.model.predict_on_batch(self.validation_data.states)
+        # tf_q_values = tf.Variable(q_values, name='QValues')
+        # tf_states = tf.Variable(self.validation_data.states, name='States')
+        #
+        # values = np.max(q_values, axis=1)  # V(s) = max_a Q(s, a)
+        # actions = np.argmax(q_values, axis=1)  # Best (greedy) action
+        #
+        # self.tensorboard_metadata = {tf_states.name: dict(Value_0=values, Action_0=actions)}
+        # sprites = {tf_states.name: (self.validation_data.sprite, self.validation_data.thumbnail_size),
+        #            tf_q_values.name: (self.validation_data.sprite, self.validation_data.thumbnail_size)}
+        #
+        # self._tensorboard_callback.add_embeddings([tf_states, tf_q_values], self.tensorboard_metadata, sprites)
+
+
 
         # self.critic_tensorboard = TensorBoardCallback('tensorboard/ac/critic', histogram_freq=1, write_grads=True)
         # self.critic_tensorboard.set_model(unwrap_model(self.critic))
         # self.critic_tensorboard.scalars += ['step', 'rolling_return', 's0_value']
+
+
+        # import tensorflow as tf
+        #
+        # self._tensorboard_callback = TensorBoardCallback(path, histogram_freq=1, write_grads=True)
+        # self._tensorboard_callback.set_model(unwrap_model(self.model))
+        # self._tensorboard_callback.scalars += ['step', 'rolling_return']
+        # self.add_callbacks(self._tensorboard_callback)
+        #
+        # self.validation_data = RandomSample(gym.make(self.env.spec.id))
+        # self.validation_data.run(sample_size=1000, thumbnail_size=(100, 75))
+        #
+        # q_values = self.model.predict_on_batch(self.validation_data.states)
+        # tf_q_values = tf.Variable(q_values, name='QValues')
+        # tf_states = tf.Variable(self.validation_data.states, name='States')
+        #
+        # values = np.max(q_values, axis=1)  # V(s) = max_a Q(s, a)
+        # actions = np.argmax(q_values, axis=1)  # Best (greedy) action
+        #
+        # self.tensorboard_metadata = {tf_states.name: dict(Value_0=values, Action_0=actions)}
+        # sprites = {tf_states.name: (self.validation_data.sprite, self.validation_data.thumbnail_size),
+        #            tf_q_values.name: (self.validation_data.sprite, self.validation_data.thumbnail_size)}
+        #
+        # self._tensorboard_callback.add_embeddings([tf_states, tf_q_values], self.tensorboard_metadata, sprites)
+        #
+        # input = self.validation_data.states
+        # output = q_values
+        # sample_weights = np.ones(input.shape[0])
+        # self._tensorboard_callback.validation_data = [input, output, sample_weights]
 
 
     def _build_actor_model(self, model):
@@ -65,9 +125,9 @@ class ActorCriticAgent(AbstractAgent):
     def train(self, target_model_update, **kwargs):
         """Train the agent in the environment for a specified number of episodes."""
         self._target_model_update = target_model_update
-#        self.step_end += self._update_model_weights
-#        self.step_end += self._update_target_weights
-        self.steps_before_training = 32
+
+        self.steps_before_training = 32     # TODO: Should not be hardcoded. Reuse warmup steps
+
         # Run the training loop
         super().train(**kwargs)
 
@@ -148,48 +208,3 @@ class ActorCriticAgent(AbstractAgent):
                 self.critic_target.set_weights(self.critic.get_weights())
 
 
-
-    def on_execution_start(self, **kwargs):
-        super().on_execution_start(**kwargs)
-        self.actor_tensorboard.on_execution_start(**kwargs)
-        # self.critic_tensorboard.on_execution_start(**kwargs)
-
-    def on_warmup_start(self, **kwargs):
-        self._warmup = True
-        self._warmup_states = []
-        self._warmup_actions = []
-        self._warmup_values = []
-
-    def on_warmup_end(self, **kwargs):
-        self._warmup = False
-
-        input = np.asarray(self._warmup_states).reshape((-1, self.num_features))
-        actor_output = np.asarray(self._warmup_actions).reshape((-1, self.num_actions))
-        critic_output = np.asarray(self._warmup_values).reshape((-1,1))
-        actor_sample_weights = np.ones(input.shape[0])
-        critic_sample_weights = np.ones(input.shape[0])
-
-        self.actor_tensorboard.validation_data = [input, actor_output, actor_sample_weights]
-        # self.critic_tensorboard.validation_data = [input, critic_output, critic_sample_weights]
-
-    def on_step_end(self, **kwargs):
-        super().on_step_end(**kwargs)
-
-        # Store test data if we're in the warmup phase
-        if self._warmup:
-            self._warmup_states.append(kwargs['s'])
-            self._warmup_actions.append(kwargs['actor_out'])
-            self._warmup_values.append(kwargs['s_value'])
-
-    def on_episode_end(self, **kwargs):
-        super().on_episode_end(**kwargs)
-
-        if not self._warmup:
-            self.actor_tensorboard.on_episode_end(**kwargs)
-            # self.critic_tensorboard.on_episode_end(**kwargs)
-
-    def on_execution_end(self, **kwargs):
-        super().on_execution_end(**kwargs)
-
-        self.actor_tensorboard.on_execution_end()
-        # self.critic_tensorboard.on_execution_end()

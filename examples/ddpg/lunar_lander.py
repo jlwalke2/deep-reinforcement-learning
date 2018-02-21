@@ -13,9 +13,9 @@ logger.setLevel(logging.DEBUG)
 if len(logger.handlers) > 0:
     logger.handlers[0].setLevel(logging.INFO)
 
-fileHandler = logging.FileHandler('logs/lunarlander_ac.log')
-fileHandler.setLevel(logging.DEBUG)
-logger.addHandler(fileHandler)
+# fileHandler = logging.FileHandler('logs/lunarlander_ac.log')
+# fileHandler.setLevel(logging.DEBUG)
+# logger.addHandler(fileHandler)
 
 env = gym.make('LunarLander-v2')
 
@@ -26,8 +26,6 @@ def actor_loss(y_true, y_pred):
     return K.mean(y_true - y_pred, axis=-1)
 
 
-
-#
 # shared_1 = Dense(64, activation='relu', name='Shared1')
 # shared_2 = Dense(32, activation='relu', name='Shared2')
 #
@@ -61,7 +59,8 @@ critic.compile(loss='mse', optimizer=rmsprop(lr=0.0016, decay=0.000001))  #sgd(l
 
 
 memory = PrioritizedMemory(maxlen=50000, sample_size=32)
-agent = ActorCriticAgent(env=env, actor=actor, critic=critic, memory=memory, max_steps_per_episode=500)
+agent = ActorCriticAgent(env=env, actor=actor, critic=critic, memory=memory,
+                         max_steps_per_episode=500, tb_path='tensorboard')
 agent.wire_events(InitialStateValue(env, critic))
 
 agent.train(max_episodes=10000, render_every_n=50, target_model_update=1e-4)
