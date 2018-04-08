@@ -1,8 +1,16 @@
-import gym
+import gym, gym.spaces
 import keras.backend as K
-from keras.models import Model, Input
-from keras.layers import Lambda
+from keras.models import Input
 import numpy as np
+from functools import reduce
+import operator
+import warnings
+
+
+try:
+    import tensorflow as tf
+except ImportError:
+    pass
 
 from .abstract import AbstractAgent
 from ..utils.misc import unwrap_model, RandomSample
@@ -13,23 +21,97 @@ import logging
 logger = logging.getLogger(__name__)
 np.seterr('raise')
 
+def get_array_size(shape):
+    return reduce(operator.mul, (x for x in shape if x is not None))
+
+def clip_gradient(gradients, clipvalue=0, clipnorm=0):
+    if clipvalue > 0:
+        if isinstance(gradients, list):
+            gradients = [K.clip(grad, -clipvalue, clipvalue) for grad in gradients]
+        else:
+            gradients = K.clip(gradients, -clipvalue, clipvalue)
+    elif clipnorm > 0:
+        from keras.optimizers import clip_norm
+
+        if isinstance(gradients, list):
+            norm = K.sqrt(sum([K.sum(K.square(grad)) for grad in gradients]))
+            gradients = [clip_norm(grad, clipnorm, norm) for grad in gradients]
+        else:
+            pass #TODO: Implement
+
+    return gradients
+
 class ActorCriticAgent(AbstractAgent):
     def __init__(self, actor, critic, **kwargs):
-        """ http://www-anw.cs.umass.edu/~barto/courses/cs687/williams92simple.pdf
+        """
+        Implementation of the Deep Deterministic Policy Gradient (DDPG) algorithm. See:
+            Continuous Control with Deep Reinforcement Learning
+            https://arxiv.org/pdf/1509.02971.pdf
+
+        Suitable for environments with continuous action spaces.  Observation space
+        may be discrete continuous.
+
         """
         super(ActorCriticAgent, self).__init__(**kwargs)
 
-#        assert len(critic.input) == 2, 'Critic model must take two inputs: state and action.'
-#        assert K.int_shape(actor.input) == K.int_shape(critic.input[0]), 'State input to actor in critic models does not match.'
-#        assert K.int_shape(actor.output) == K.int_shape(critic.input[1]), 'Action input to critic model does not the output from the actor model.'
+        if K.backend() != 'tensorflow':
+            raise RuntimeError(f'{type(self)} currently only supports the TensorFlow backend.')
 
-        self._metric_names.update({'error','delta', 's_value', 'actor_out'})
+        # DDPG implementation only supports continuous action spaces.
+        if not isinstance(self.env.action_space, gym.spaces.Box):
+            raise TypeError(f'DDPG agent expects an environment with a continuous action space.  Received {type(env.action_space)} instead.')
 
-        # Create target models
-        self.actor, self.trainable_actor = self._build_actor_model(actor)
-        #self.actor_target = self._clone_model(self.actor)
+        # Convert tensor dimensions to total number of input values
+        actor_input_size = get_array_size(K.int_shape(actor.inputs[0]))
+        actor_output_size = get_array_size(K.int_shape(actor.outputs[0]))
+
+        # Validate actor architecture
+        assert len(actor.inputs) == 1, f'Expected an actor network that takes a single input: the current state.  Received an actor with {len(actor.inputs)} inputs.'
+        assert len(actor.outputs) == 1, f'Expected an actor network with a single output tensor: the action to take.  Received an actor with {len(actor.outputs)} outputs.'
+        assert actor_input_size == self.num_features, f"Actor network's input tensor with shape of {actor.inputs[0].shape} does not match state dimensions of {self.num_features}."
+
+        # TODO: Fix.  Check dimension of action, not number of actions
+        assert actor_output_size == self.num_actions, f"Actor network's output tensor with shape of {actor.outputs[0].shape} does not match state dimensions of {self.num_actions}."
+
+        if critic is None:
+            pass
+            # TODO: Create critic based on actor
+
+        # Validate critic architecture
+        assert len(critic.inputs) == 2, f'Expected a critic network that takes two inputs: the state and the action.  Received a critic with {len(critic.inputs)} inputs.'
+        assert K.int_shape(critic.inputs[0]) == K.int_shape(actor.inputs[0]), f'Critic state input with shape {critic.inputs[0].shape} does not match expected dimensions of {actor.inputs[0].shape}.'
+        assert K.int_shape(critic.inputs[1]) == K.int_shape(actor.outputs[0]), f'Critic action input with shape {critic.inputs[1].shape} does not match expected dimensions of {actor.outputs[0].shape}.'
+
+        actor_args = {}
+        if getattr(actor, 'optimizer', None) is not None:
+            msg = f'Actor has been compiled with {type(actor.optimizer)}, but will not be used during training'
+            warnings.warn(msg, stacklevel=2)
+            logger.warning(msg)
+
+            for attr in ['clipnorm', 'clipvalue', 'lr']:
+                actor_args[attr] = getattr(actor.optimizer, attr, 0)
+
+        self.train_actor = self._get_actor_train_function(actor, **actor_args)
+        self.train_critic = critic.train_on_batch
+
+        # Clone models to create target models
+        self.actor = actor
+        self.actor_target = self._clone_model(actor)
         self.critic = critic
-        self.critic_target = self._clone_model(self.critic)
+        self.critic_target = self._clone_model(critic)
+
+        self._grad_q_wrt_a = tf.gradients(critic.output, critic.inputs[1])
+
+        # Clip gradient Q(s, a) wrt a if critic model has gradient clipping set
+        if getattr(critic, 'optimizer', None) is not None:
+            args = {}
+            for attr in ['clipnorm', 'clipvalue']:
+                args[attr] = getattr(critic.optimizer, attr, 0)
+
+            self._grad_q_wrt_a = clip_gradient(self._grad_q_wrt_a, **args)
+
+        self._metric_names.update({'error','delta', 'q_value', 'actor_out'})
+
 
     def _configure_tensorboard(self, path):
         from ..utils.callbacks import TensorBoardCallback
@@ -98,26 +180,28 @@ class ActorCriticAgent(AbstractAgent):
         # sample_weights = np.ones(input.shape[0])
         # self._tensorboard_callback.validation_data = [input, output, sample_weights]
 
+    def _get_actor_train_function(self, actor, lr=1e-4, clipnorm=0, clipvalue=0):
+        # Placeholder for input of gradient Q(s, a) wrt a
+        grad_q_wrt_a = Input(shape=(self.num_actions,), name='grad_q_input')
 
-    def _build_actor_model(self, model):
-        # Return new model w/
+        # Compute gradient of actor weights wrt action * gradient of Q wrt action
+        # By chain rule, gives gradient of Q wrt actor weights
+        # NOTE: using TensorFlow since K.gradient(x, y) does not support passing gradient of ys
+        actor_grads = tf.gradients(actor.outputs[0], actor.trainable_weights, -grad_q_wrt_a)
 
-        actions = model.output
-        mask = Input(shape=(self.num_actions,), name='Mask')
-        delta = Input(shape=(1,), name='DeltaV')
+        actor_grads = clip_gradient(actor_grads, clipvalue=clipvalue, clipnorm=clipnorm)
 
-        def loss(inputs):
-            actions, mask, delta = inputs
+        updates = zip(actor_grads, actor.trainable_weights)
+        optimizer = tf.train.GradientDescentOptimizer(learning_rate=lr).apply_gradients(updates)
+        K.get_session().run(tf.global_variables_initializer())
 
-            return -1 * K.sum(K.log(actions + 1e-20) * delta, axis=-1)
-#            return -1 * K.sum(K.log(actions + 1e-20) * mask, axis=-1) * delta
+        def train_func(state, grad):
+            K.get_session().run(optimizer, feed_dict={
+                actor.inputs[0]: state,
+                grad_q_wrt_a: grad
+            })
 
-
-        loss_out = Lambda(loss, output_shape=(1,), name='LossCalc')([actions, mask, delta])
-        inputs = [model.input, mask, delta]
-        actor = Model(inputs=inputs, outputs=[loss_out])
-        actor.compile(model.optimizer, loss=lambda y_true, y_pred: y_pred)
-        return model, actor
+        return train_func
 
 
 
@@ -133,18 +217,21 @@ class ActorCriticAgent(AbstractAgent):
 
 
     def choose_action(self, state):
-        # Actor network returns probability of choosing each action in current state
-        actions = self.actor.predict_on_batch(state)
-        self._status['actor_out'] = actions
-        self._status['s_value'] = self.critic.predict_on_batch(state)
+        # For DDPG actor network returns the action to take
+        action = self.actor.predict_on_batch(state)
+        action = np.asarray(action).reshape((1, -1))
 
-        assert not np.any(np.isnan(actions)), 'NaN value(s) output by the Actor network: {}'.format(actions)
+        # Policy is still used to add noise for exploration
+        action = self.policy(action)
 
-        logger.debug(actions)
-        actions = np.round(actions, 10)
-        # Select the action to take
-#        return  actions[0]
-        return np.random.choice(np.arange(actions.size), p=actions.ravel())
+        self._status['actor_out'] = action
+        self._status['q_value'] = self.critic.predict_on_batch([state, action])
+
+        assert not np.any(np.isnan(action)), 'NaN value(s) output by the Actor network: {}'.format(action)
+
+        return action
+
+
 
     def _update_weights(self):
         self._update_model_weights()
@@ -161,30 +248,28 @@ class ActorCriticAgent(AbstractAgent):
 
         assert states.shape == (self.memory.sample_size, self.num_features)
         assert s_primes.shape == (self.memory.sample_size, self.num_features)
-        assert actions.shape == (self.memory.sample_size, 1)
+        assert actions.shape == (self.memory.sample_size, self.num_actions)
         assert rewards.shape == (self.memory.sample_size, 1)
         assert flags.shape == (self.memory.sample_size, 1)
 
-        s_prime_val = self.critic_target.predict_on_batch(s_primes)                 # V(s')
-        s_prime_val[flags.ravel()] = 0                                              # V(s') = 0 if s' is terminal
-        critic_target = rewards + self.gamma * s_prime_val                          # V(s) = r + gamma * V(s')
+        s_prime_actions = self.actor_target.predict_on_batch(s_primes)              # pi(s')
+        predicted_s_prime_value = self.critic_target.predict_on_batch([s_primes, s_prime_actions])  # Predicted Q(s', a')
+        observed_q_value = self.gamma * predicted_s_prime_value
+        observed_q_value[flags] = 0.                # Return(s') = 0 if s' is a terminal state
+        observed_q_value += rewards
 
-        critic_pred = self.critic_target.predict_on_batch(states)
-        delta = critic_target - critic_pred + 1e-20
+        # Compute gradient of Q(s, a) wrt a.
+        grad_tf = K.get_session().run(self._grad_q_wrt_a, feed_dict={
+            self.critic.inputs[0]: states,
+            self.critic.inputs[1]: actions
+        })[0]  # Returns list of 1 gradient
 
-        critic_error = self.critic.train_on_batch(states, critic_target)            # update critic weights
+        # Update TF actor weights
+        err_actor = self.train_actor(states, grad_tf)
+        err_critic = self.train_critic([states, actions], observed_q_value)
 
+        # TODO: Report error metrics
 
-        mask = np.zeros((self.memory.sample_size, self.num_actions))
-        mask[range(actions.shape[0]), actions.astype('int32').ravel()] = 1.0
-
-        dummy_target = np.zeros_like(actions)
-
-        actor_error = self.trainable_actor.train_on_batch([states, mask, critic_target], dummy_target)
-        #actor_error = self.trainable_actor.train_on_batch([states, mask, delta], dummy_target)
-        # pred = true - log(a)*(R-v)
-
-        pass
 
     def _update_target_weights(self, **kwargs):
         # Check target model update
