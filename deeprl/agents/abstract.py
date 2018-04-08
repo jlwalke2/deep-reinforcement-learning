@@ -277,6 +277,9 @@ class AbstractAgent:
         :param upload: Upload training results to OpenAI Gym site?
         """
 
+        if frame_skip <= 0:
+            raise ValueError(f'Invalid value of {frame_skip} for `frame_skip`. Value must be a positive integer.')
+
         # TODO: pass metrics during training
         # TODO: wire & unwire events
 
@@ -320,6 +323,10 @@ class AbstractAgent:
 
                     # Action replay.  We repeat the selected action for n steps.
                     a = self.choose_action(s.reshape(1, -1))
+
+                    if isinstance(self.env.action_space, gym.spaces.Box):
+                        a = a.reshape(self.env.action_space.shape)
+
                     r = 0
 
                     # Replay the selected action as necessary
@@ -349,12 +356,15 @@ class AbstractAgent:
                     s, a, r, s_prime, episode_done = self.preprocess_state(s, a, r, s_prime, episode_done)
                     self._status.episode_done = episode_done
 
+                    # Store the experience before setting early termination flag.
+                    # Just because we end early in a state on one trajectory doesn't mean that state should always
+                    # be treated as a terminal state.
+                    if self.memory is not None:
+                        self.memory.append((s, a, r, s_prime, episode_done))
+
                     # Force the episode to end if we've reached the maximum number of steps allowed
                     if self.max_steps_per_episode and self._status.step >= self.max_steps_per_episode:
                         self._status.episode_done = True
-
-                    if self.memory is not None:
-                        self.memory.append((s, a, r, s_prime, self._status.episode_done))
 
                     self._raise_step_end_event(s=s, s_prime=s_prime, a=a, r=r)
 
