@@ -23,7 +23,12 @@ class DeepQAgent(AbstractAgent):
 
 
 class DoubleDeepQAgent(DeepQAgent):
+    """
+    DDQN agent.  Uses a neural network to approximate Q(s,a) for all actions, and then uses a policy to select the best
+    action.
 
+    Appropriate for decrete action spaces.
+    """
     def __init__(self, **kwargs):
         super(DoubleDeepQAgent, self).__init__(**kwargs)
 
