@@ -99,7 +99,7 @@ class NoisyPolicy(AbstractPolicy):
     to generate mean-reverting noise.
     """
 
-    def __init__(self, theta, sigma, mu=0):
+    def __init__(self, theta, sigma, mu=0, clip=None, clipupper=None, cliplower=None):
         if not theta > 0:
             raise ValueError(f'Theta value of {theta} is not greater than zero.')
 
@@ -111,11 +111,23 @@ class NoisyPolicy(AbstractPolicy):
         self.sigma = float(sigma)
         self.x = 0
 
+        self.clip_upper = clipupper
+        self.clip_lower = cliplower
+
+        if clip is not None:
+            self.clip_upper = clip.high
+            self.clip_lower = clip.low
+
+    def _clip(self, action):
+        return np.clip(action, self.clip_lower, self.clip_upper)
+
     def __call__(self, action):
         assert isinstance(action, np.ndarray), f'Expected action to be an instance of ndarray.  Instead got {type(action)}.'
 
         self.x = self.x + self.theta * (self.mu - self.x) + self.sigma * np.random.randn(action.size)
-        return action + self.x
+
+        return self._clip(action + self.x)
+
 
 class GreedyPolicy(EpsilonGreedyPolicy):
     '''
