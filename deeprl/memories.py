@@ -15,7 +15,7 @@ class Memory():
         :param sample_size: Number of experiences to sample unless otherwise specified
         '''
         self.buffer = None                  # Lazy initialization since we don't know # of columns
-        self.max_len = maxlen
+        self.max_len = int(maxlen)
         self.is_full = False
         self.index = 0
         self.sample_size = sample_size
