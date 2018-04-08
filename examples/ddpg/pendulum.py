@@ -2,10 +2,15 @@ import gym
 from deeprl.agents import ActorCriticAgent
 from keras.layers import Dense, Input, concatenate
 from keras.models import Sequential, Model
-from keras.optimizers import rmsprop
+from keras.optimizers import rmsprop, sgd
+from keras.regularizers import l2
+from deeprl.memories import Memory
+from deeprl.policies import NoisyPolicy
 
-from deeprl.memories import PrioritizedMemory
-from deeprl.policies import EpsilonGreedyPolicy
+import logging
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+logger.handlers[0].setLevel(logging.INFO)
 
 
 env = gym.make('Pendulum-v0')
@@ -14,25 +19,27 @@ num_features = env.observation_space.shape[0]
 num_actions = env.action_space.shape[0]
 
 actor = Sequential([
-    Dense(16, input_dim=num_features, activation='relu'),
-    Dense(16, activation='relu'),
-    Dense(units=num_actions, activation='sigmoid')
+    Dense(32, input_dim=num_features, activation='relu'),
+    Dense(32, activation='relu'),
+    Dense(units=num_actions, activation='tanh')
 ])
-actor.compile(loss='mse', optimizer=rmsprop(lr=0.0016, decay=0.000001))
+actor.compile(loss='mse', optimizer=rmsprop(lr=1e-4, decay=0.000001, clipnorm=1.))
 
-state_in = Input(shape=(num_features,))
-action_in = Input(shape=(1,))
-critic = concatenate([state_in, action_in])
-critic = Dense(16, activation='relu')(critic)
-critic = Dense(16, activation='relu')(critic)
-q_out = Dense(1, activation='linear')(critic)
-critic = Model(inputs=[state_in, action_in], outputs=[q_out])
-critic.compile(loss='mse', optimizer=rmsprop(lr=0.0016, decay=0.000001))
+critic_state_input = Input(shape=(num_features,), name='CriticStateIn')
+critic_action_input = Input(shape=(num_actions,), name='CriticActionIn')
+critic_merged_input = concatenate([critic_state_input, critic_action_input])
+critic_h1 = Dense(32, activation='relu', name='CriticH1', kernel_regularizer=l2(1e-2), bias_regularizer=l2(1e-2))(
+    critic_merged_input)
+critic_h2 = Dense(32, activation='relu', name='CriticH2', kernel_regularizer=l2(1e-2), bias_regularizer=l2(1e-2))(
+    critic_h1)
+critic_out = Dense(1, activation='linear', name='CriticOut', kernel_regularizer=l2(1e-2), bias_regularizer=l2(1e-2))(
+    critic_h2)
+critic = Model(inputs=[critic_state_input, critic_action_input], outputs=[critic_out])
+critic.compile(sgd(lr=1e-3, clipnorm=5.), 'mse')
 
-
-memory = PrioritizedMemory(maxlen=50000, sample_size=32)
-policy = EpsilonGreedyPolicy(min=0.025, decay=0.96, exploration_episodes=1)
+memory = Memory(maxlen=1e6, sample_size=32)
+policy = NoisyPolicy(theta=0.15, sigma=0.15)
 
 agent = ActorCriticAgent(env=env, actor=actor, critic=critic, policy=policy, memory=memory, max_steps_per_episode=500)
 
-agent.train(max_episodes=1500, render_every_n=1, target_model_update=750)
+agent.train(max_episodes=1500, render_every_n=1, target_model_update=1e-3, frame_skip=1)
