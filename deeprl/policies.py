@@ -19,8 +19,13 @@ class RandomPolicy(AbstractPolicy):
     def __call__(self, *args, **kwargs):
         if isinstance(self.env.action_space, gym.spaces.Discrete):
             return self.env.action_space.sample()
+        elif isinstance(self.env.action_space, gym.spaces.Box):
+            s = self.env.action_space
+            # Uniformly sample vector of appropriate size.  Ensure that each element is in the
+            # high-low range defined for that element.
+            return np.random.random(s.shape) * (s.high - s.low) + s.low
         else:
-            raise TypeError(f'Action selection for action space of type {type(env.action_space)} is not defined.')
+            raise TypeError(f'Action selection for action space of type {type(self.env.action_space)} is not defined.')
 
 
 class BoltzmannPolicy(AbstractPolicy):
@@ -86,6 +91,31 @@ class EpsilonGreedyPolicy(AbstractPolicy):
 
         logger.info('Epsilon: {}'.format(round(self.epsilon, 2)))
 
+
+class NoisyPolicy(AbstractPolicy):
+    """
+    A policy for adding pseudo-random noise to a chosen action.  Intended for use with continuous action spaces.
+    Provides an implementation of an Orstein-Uhlenbeck Process (https://en.wikipedia.org/wiki/Ornstein%E2%80%93Uhlenbeck_process)
+    to generate mean-reverting noise.
+    """
+
+    def __init__(self, theta, sigma, mu=0):
+        if not theta > 0:
+            raise ValueError(f'Theta value of {theta} is not greater than zero.')
+
+        if not sigma > 0:
+            raise ValueError(f'Sigma value of {sigma} is not greater than zero.')
+
+        self.mu = mu
+        self.theta = float(theta)
+        self.sigma = float(sigma)
+        self.x = 0
+
+    def __call__(self, action):
+        assert isinstance(action, np.ndarray), f'Expected action to be an instance of ndarray.  Instead got {type(action)}.'
+
+        self.x = self.x + self.theta * (self.mu - self.x) + self.sigma * np.random.randn(action.size)
+        return action + self.x
 
 class GreedyPolicy(EpsilonGreedyPolicy):
     '''
