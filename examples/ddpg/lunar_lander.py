@@ -1,11 +1,12 @@
 import gym
 from deeprl.agents.ddpg import ActorCriticAgent
 import keras.backend as K
-from keras.layers import Dense, Input
+from keras.layers import Dense, Input, concatenate
 from keras.models import Sequential, Model
 from keras.optimizers import rmsprop, sgd
-from deeprl.memories import PrioritizedMemory
+from deeprl.memories import Memory, PrioritizedMemory
 from deeprl.utils.metrics import InitialStateValue
+from deeprl.policies import NoisyPolicy
 
 import logging
 logger = logging.getLogger()
@@ -17,56 +18,31 @@ if len(logger.handlers) > 0:
 # fileHandler.setLevel(logging.DEBUG)
 # logger.addHandler(fileHandler)
 
-env = gym.make('LunarLander-v2')
+env = gym.make('LunarLanderContinuous-v2')
 
 num_features = env.observation_space.shape[0]
-num_actions = env.action_space.n
-
-def actor_loss(y_true, y_pred):
-    return K.mean(y_true - y_pred, axis=-1)
-
-
-# shared_1 = Dense(64, activation='relu', name='Shared1')
-# shared_2 = Dense(32, activation='relu', name='Shared2')
-#
-# actor_in = Input(shape=(num_features,), name='ActorIn')
-# actor_h_1 = shared_1(actor_in)
-# actor_h_2 = shared_2(actor_h_1)
-# actor_out = Dense(units=num_actions, activation='softmax', name='ActorOut')(actor_h_2)
-# actor = Model(inputs=[actor_in], outputs=[actor_out])
-# actor.compile(loss=actor_loss, optimizer=rmsprop(lr=0.0016, decay=0.000001, clipnorm=0.5))
-#
-# critic_in = Input(shape=(num_features,), name='CriticIn')
-# critic_h_1 = shared_1(critic_in)
-# critic_h_2 = shared_2(critic_h_1)
-# critic_out = Dense(units=1, activation='linear', name='CriticOut')(critic_h_2)
-# critic = Model(inputs=[critic_in], outputs=[critic_out])
-# critic.compile(loss='mse', optimizer=rmsprop(lr=0.0016, decay=0.000001, clipnorm=0.001))
+num_actions = env.action_space.shape[0]
 
 actor = Sequential([
-    Dense(16, input_dim=num_features, activation='relu'),
-    Dense(16, activation='relu'),
-    Dense(units=num_actions, activation='softmax')
+    Dense(128, input_dim=num_features, activation='relu'),
+    Dense(128, activation='relu'),
+    Dense(units=num_actions, activation='tanh')
 ])
-actor.compile(loss=actor_loss, optimizer=rmsprop(lr=0.0016, decay=0.000001)) #optimizer=sgd(lr=1e-13))
+actor.compile(loss='mse', optimizer=rmsprop(lr=1e-4)) #optimizer=sgd(lr=1e-13))
 
-critic = Sequential([
-    Dense(16, input_dim=num_features, activation='relu'),
-    Dense(16, activation='relu'),
-    Dense(units=1, activation='linear')
-])
-critic.compile(loss='mse', optimizer=rmsprop(lr=0.0016, decay=0.000001))  #sgd(lr=1e-13))
+critic_state_input = Input(shape=(num_features,), name='critic_state_input')
+critic_action_input = Input(shape=(num_actions,), name='critic_action_input')
+critic_merged_input = concatenate([critic_state_input, critic_action_input])
+critic_h1 = Dense(128, activation='relu', name='critic_h1')(critic_merged_input)
+critic_h2 = Dense(128, activation='relu', name='critic_h2')(critic_h1)
+critic_out = Dense(1, activation='linear', name='CriticOut')(critic_h2)
+critic = Model(inputs=[critic_state_input, critic_action_input], outputs=[critic_out])
+critic.compile(sgd(lr=1e-3, clipnorm=5.), 'mse')
 
-
-memory = PrioritizedMemory(maxlen=50000, sample_size=32)
+memory = PrioritizedMemory(maxlen=1e6, sample_size=32)
 agent = ActorCriticAgent(env=env, actor=actor, critic=critic, memory=memory,
-                         max_steps_per_episode=500, tb_path='tensorboard')
-agent.wire_events(InitialStateValue(env, critic))
+                         policy=NoisyPolicy(0.15, 0.5, clip=env.action_space),
+                         max_steps_per_episode=500,
+                         tb_path = 'tensorboard')
 
 agent.train(max_episodes=10000, render_every_n=50, target_model_update=1e-4)
-
-# df = agent.logger.get_episode_metrics()
-# p = df.plot.line(x='episode_count', y='total_reward')
-# p = df.plot.line(x='episode_count', y='mean_reward', ax=p)
-#p.figure.show()
-pass
