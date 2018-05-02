@@ -154,7 +154,7 @@ class PrioritizedMemory(Memory):
         if 'delta' in kwargs and kwargs['delta'] is not None:
             assert self.last_sample is not None
 
-            self.buffer[self.last_sample, -1] = np.abs(kwargs['delta'])
+            self.buffer[self.last_sample, -1] = np.abs(kwargs['delta'].ravel())
 
     def on_calculate_error(self, *args, **kwargs):
 
