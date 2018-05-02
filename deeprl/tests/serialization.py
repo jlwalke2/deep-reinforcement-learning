@@ -5,7 +5,7 @@ from keras.layers import Dense
 from keras.models import Sequential
 from keras.optimizers import rmsprop
 
-from deeprl.agents.DoubleDeepQAgent import DoubleDeepQAgent
+from deeprl.agents.dqn import DoubleDeepQAgent
 from deeprl.memories import PrioritizedMemory
 from deeprl.policies import BoltzmannPolicy, EpsilonGreedyPolicy
 from deeprl.utils.metrics import *

@@ -119,12 +119,12 @@ def create_critic(num_features, num_actions):
     critic_out = Dense(1, activation='linear', name='CriticOut', kernel_regularizer=l2(1e-2), bias_regularizer=l2(1e-2))(critic_h2)
     critic = Model(inputs=[critic_state_input, critic_action_input], outputs=[critic_out])
 
-    def loss(y_true, y_pred):
-        err = K.clip(K.square(y_true - y_pred), 1e-30, 1e10)
-        return K.mean(err, axis=-1)
+    # def loss(y_true, y_pred):
+    #     err = K.clip(K.square(y_true - y_pred), 1e-30, 1e10)
+    #     return K.mean(err, axis=-1)
 
 
-    critic.compile(sgd(lr=1e-3), loss)
+    critic.compile(sgd(lr=1e-3, clipnorm=5.), 'mse')
 
     return critic, critic.train_on_batch
 
@@ -152,7 +152,8 @@ actor_target.compile(loss='mse', optimizer='sgd')
 critic_target = Model.from_config(critic.get_config())
 critic_target.compile(loss='mse', optimizer='sgd')
 
-grad_q_wrt_a = tf.clip_by_value(tf.gradients(critic.output, critic.inputs[1]), -1., 1.)
+#grad_q_wrt_a = tf.clip_by_value(tf.gradients(critic.output, critic.inputs[1]), -1., 1.)
+grad_q_wrt_a = tf.gradients(critic.output, critic.inputs[1])
 
 memory = Memory(maxlen=10**6, sample_size=64)
 gamma = 0.99
@@ -257,14 +258,15 @@ try:
             err_actor = actor_train_func(s_batch, grad_tf)
             err_critic = critic_train_func([s_batch, a_batch], s_observed_val)
 
-            # for p, o in zip(critic.predict_on_batch([s_batch, a_batch]), s_predicted_val):
-            #     print(f'{p}  {o}  {p-o}')
-            print(f'MSE: {err_critic}   Mean Diff: {np.mean(s_predicted_val - s_observed_val)}')  # Pred - Obs = -a lot
+            print(f'E: {episode}  S: {step}  MSE: {err_critic}   Mean Diff: {np.mean(s_predicted_val - s_observed_val)}   Buffer:{len(memory)}')
             if DEBUG:
                 debug_queue.append(f'Critic Training loss:  {err_critic}')
 
             if err_critic > 1000:
                 print('uh oh!')
+                for p, o in zip(critic.predict_on_batch([s_batch, a_batch]), s_predicted_val):
+                    print(f'{p}  {o}  {p-o}')
+
 
             # Update target models
             # Soft model update
