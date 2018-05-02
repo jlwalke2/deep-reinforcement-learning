@@ -73,6 +73,9 @@ class ActorCriticAgent(AbstractAgent):
         # TODO: Fix.  Check dimension of action, not number of actions
         assert actor_output_size == self.num_actions, f"Actor network's output tensor with shape of {actor.outputs[0].shape} does not match state dimensions of {self.num_actions}."
 
+        t0 = actor.layers[0]
+        t1 = actor.layers[0](critic.inputs[0])
+
         if critic is None:
             pass
             # TODO: Create critic based on actor
@@ -117,11 +120,10 @@ class ActorCriticAgent(AbstractAgent):
         from ..utils.callbacks import TensorBoardCallback
 
         self.validation_data = RandomSample(gym.make(self.env.spec.id))
-        self.validation_data.run(sample_size=1000, thumbnail_size=(100, 75))
+        self.validation_data.run(sample_size=100, thumbnail_size=(100, 75))
 
         self.actor_tensorboard = TensorBoardCallback(path + '/actor', histogram_freq=1, write_grads=True)
         self.actor_tensorboard.set_model(unwrap_model(self.actor))
-        self.actor_tensorboard.validation_data
         self.actor_tensorboard.scalars += ['step', 'rolling_return']
         self.add_callbacks(self.actor_tensorboard)
 
@@ -129,6 +131,12 @@ class ActorCriticAgent(AbstractAgent):
         actions = self.actor.predict_on_batch(self.validation_data.states)
         sample_weights = np.ones(input.shape[0])
         self.actor_tensorboard.validation_data = [input, actions, sample_weights]
+
+
+        # self.critic_tensorboard = TensorBoardCallback(path + '/critic', histogram_freq=1, write_grads=True)
+        # self.critic_tensorboard.set_model(unwrap_model(self.critic))
+        # self.add_callbacks(self.critic_tensorboard)
+
 
 
 
@@ -234,8 +242,9 @@ class ActorCriticAgent(AbstractAgent):
 
 
     def _update_weights(self):
-        self._update_model_weights()
+        stats = self._update_model_weights()
         self._update_target_weights()
+        return stats
 
     def _update_model_weights(self, **kwargs):
         assert 'total_steps' in self._status
@@ -265,8 +274,14 @@ class ActorCriticAgent(AbstractAgent):
         })[0]  # Returns list of 1 gradient
 
         # Update TF actor weights
-        err_actor = self.train_actor(states, grad_tf)
+        self.train_actor(states, grad_tf)
         err_critic = self.train_critic([states, actions], observed_q_value)
+
+        diff = observed_q_value - self.critic.predict_on_batch([states, actions])
+
+        return dict(total_error=err_critic, delta=diff)
+
+
 
         # TODO: Report error metrics
 
