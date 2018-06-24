@@ -7,11 +7,13 @@ from keras.regularizers import l2
 from deeprl.memories import Memory
 from deeprl.policies import NoisyPolicy
 
-import logging
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-logger.handlers[0].setLevel(logging.INFO)
+config = dict(version=1,
+              handlers={'console': {'class': 'logging.StreamHandler', 'level': 'INFO'}},
+              root={'level': 'DEBUG', 'handlers': ['console']},
+              disable_existing_loggers=False)
 
+import logging.config
+logging.config.dictConfig(config)
 
 env = gym.make('Pendulum-v0')
 
@@ -41,5 +43,4 @@ memory = Memory(maxlen=1e6, sample_size=32)
 policy = NoisyPolicy(theta=0.15, sigma=0.15)
 
 agent = ActorCriticAgent(env=env, actor=actor, critic=critic, policy=policy, memory=memory, max_steps_per_episode=500)
-
-agent.train(max_episodes=1500, render_every_n=1, target_model_update=1e-3, frame_skip=1)
+agent.train(max_episodes=1500, render_every_n=10, target_model_update=1e-3, frame_skip=1)
