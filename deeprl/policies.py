@@ -111,8 +111,8 @@ class NoisyPolicy(AbstractPolicy):
         self.sigma = float(sigma)
         self.x = 0
 
-        self.clip_upper = clipupper
-        self.clip_lower = cliplower
+        self.clip_upper = clipupper or np.inf
+        self.clip_lower = cliplower or -np.inf
 
         if clip is not None:
             self.clip_upper = clip.high
