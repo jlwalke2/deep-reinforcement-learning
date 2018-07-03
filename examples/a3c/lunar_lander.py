@@ -5,12 +5,19 @@ from keras.layers import Dense, Flatten, Input, concatenate
 from keras.models import Sequential, Model
 from keras.optimizers import rmsprop
 
+config = dict(version=1,
+              handlers={'console': {'class': 'logging.StreamHandler', 'level': 'INFO'}},
+              root={'level': 'DEBUG', 'handlers': ['console']},
+              disable_existing_loggers=False)
+
+import logging.config
+logging.config.dictConfig(config)
+
 if __name__ == '__main__':
     env = gym.make('LunarLander-v2')
 
     num_features = env.observation_space.shape[0]
     num_actions = env.action_space.n
-
 
     actor = Sequential([
         Dense(32, input_dim=num_features, activation='relu'),
@@ -27,9 +34,7 @@ if __name__ == '__main__':
     critic.compile(loss='mse', optimizer=rmsprop(lr=0.0016, decay=0.000001))
 
     agent = A3CAgent(env=env, actor=actor, critic=critic, max_steps_per_episode=500)
-    import logging
-    agent.logger.setLevel(logging.DEBUG)
-    agent.train(num_threads=1, max_episodes=10, render_every_n=10)
+    agent.train(num_workers=4, max_episodes=500, render_every_n=10)
 
     df = agent.history.get_episode_metrics()
     if df.shape[0] > 0:
