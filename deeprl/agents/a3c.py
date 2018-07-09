@@ -1,4 +1,4 @@
-from .abstract import AbstractAgent
+from . import AbstractAgent
 from deeprl.memories import TrajectoryMemory
 import gym
 import multiprocessing
@@ -7,22 +7,17 @@ import numpy as np
 import keras.backend as K
 import keras.models
 import pickle
-import random
 
-import logging
-#logger = logging.getLogger(__name__)
-logger = multiprocessing.log_to_stderr()
+DEFAULT_TRAIN_INTERVAL = 5 # Number of steps between weight updates
 
 def copy_local(arg):
     return pickle.loads(pickle.dumps(arg))
 
 class A3CWorker(AbstractAgent):
-    # TODO: Implement shared logger
-    # TODO: Pass gamma in config
     # TODO: Allow shared weights between actor & critic
     # TODO: Support id/name in metrics collection
 
-    def __init__(self, id, shared_config, shared_actor, shared_critic):
+    def __init__(self, id, shared_config, shared_actor, shared_critic, **kwargs):
         assert 'env' in shared_config, 'Configuration missing key "env".'
 
         self.id = id
@@ -35,17 +30,74 @@ class A3CWorker(AbstractAgent):
         self.shared_critic = shared_critic
 
         self.train_actor_on_batch = self._build_actor_train_func(self.local_actor)
-        self.gamma = self.config['gamma']
-        self.train_interval = 5                 # TODO: Pull from config or default
+        self.train_interval = self.config.get('train_every_n', DEFAULT_TRAIN_INTERVAL)
 
         env = gym.make(self.config['env'])
         memory = TrajectoryMemory(maxlen=self.train_interval)
         max_steps = self.config['max_steps_per_episode']
-        logger = multiprocessing.log_to_stderr()
 
-        super(A3CWorker, self).__init__(env, memory=memory, max_steps_per_episode=max_steps)
+        super(A3CWorker, self).__init__(env, gamma=self.config['gamma'], memory=memory, max_steps_per_episode=max_steps, **kwargs)
 
-        logger.info('Starting {}...'.format(self.name))
+        # Construct an upper triangular matrix where each diagonal 0..k = the discount factor raised to that power
+        # Once constructed, the n-step return can be computed as Gr where G is the matrix of discount factors
+        # and r is the vector of rewards observed at each time step
+        self.G = sum([np.diagflat(np.ones(self.train_interval - i) * self.gamma ** i, k=i) for i in range(self.train_interval)])
+
+        # Automatically refresh the local weights when each episode starts
+        self.episode_start += self._refresh_local_weights
+
+        self.logger.info(f'A3CWorker instance {self.name} created.')
+
+    def _refresh_local_weights(self, *args, **kwargs):
+        # Refresh the weights of the local models from the shared model weights
+        self.orig_actor_weights = copy_local(self.shared_actor.get_weights())
+        self.orig_critic_weights = copy_local(self.shared_critic.get_weights())
+
+        self.local_actor.set_weights(self.orig_actor_weights)
+        self.local_critic.set_weights(self.orig_critic_weights)
+
+        self.logger.debug('Refreshed local weights from shared model.')
+
+
+    def _update_weights(self):
+        # Weight updates are only done at the end of an episode or after a specific number of steps have been taken.
+        # Abort training if episode isn't done and the current step doesn't fall on the training schedule.
+        if not self._status.episode_done and self._status.step % self.train_interval != 0:
+            return
+
+        states, actions, rewards, s_primes, flags = self.memory.sample()
+        batch_size = states.shape[0]
+
+        # Total n-step return from each state
+        R = np.dot(self.G, rewards)
+
+        # If final state was terminate than it's value is 0.
+        # Otherwise, we must include the discounted value of the last state observed.
+        # Discount factor for V(s') is gamma * discount for last reward observed before s'.
+        if flags[-1] == False:
+            terminal_val = self.local_critic.predict(s_primes[-1, :].reshape((1, -1)))
+            R += (self.G[:, -1] * self.gamma * terminal_val).reshape(R.shape)
+
+        # Train the actor network
+        mask = np.zeros((batch_size, self.num_actions))
+        mask[range(batch_size), actions.astype('int32').ravel()] = 1
+        V = self.local_critic.predict_on_batch(states)
+        advantage = R - V
+        actor_err = self.train_actor_on_batch([states, mask, advantage])
+
+        # Train the critic network
+        critic_err = self.local_critic.train_on_batch(states[:-1, :], R[:-1])
+
+        # Update the shared model weights and refresh local weights
+        actor_delta = [new - old for new, old in zip(self.local_actor.get_weights(), self.orig_actor_weights)]
+        self.orig_actor_weights = copy_local(self.shared_actor.add_delta(actor_delta))
+        self.local_actor.set_weights(self.orig_actor_weights)
+
+        critic_delta = [new - old for new, old in zip(self.local_critic.get_weights(), self.orig_critic_weights)]
+        self.orig_critic_weights = copy_local(self.shared_critic.add_delta(critic_delta))  # Add deltas and get updated weights
+        self.local_critic.set_weights(self.orig_critic_weights)  # Update the model with new weights
+
+        self.logger.debug('Shared weights updated.')
 
 
     def _build_actor_train_func(self, model):
@@ -90,94 +142,11 @@ class A3CWorker(AbstractAgent):
         return local_model
 
     def choose_action(self, state):
-        # TODO: Enable swappable policies
-        
         # Actor network returns probability of choosing each action in current state
         actions = self.local_actor.predict_on_batch(state)
 
-        if random.random() < 0.1:
-            return np.random.choice(np.arange(actions.size))
-        else:
-            # Select the action to take
-            return np.random.choice(np.arange(actions.size), p=actions.ravel())
+        return np.random.choice(np.arange(actions.size), p=actions.ravel())
 
-    def train(self):
-        logger.info('Training started...')
-        max_episodes = self.config['max_episodes']
-
-        # Construct an upper triangular matrix where each diagonal 0..k = the discount factor raised to that power
-        # Once constructed, the n-step return can be computed as Gr where G is the matrix of discount factors
-        # and r is the vector of rewards observed at each time step
-        G = sum([np.diagflat(np.ones(self.train_interval - i) * self.gamma ** i, k=i) for i in range(self.train_interval)])
-        logger.info(f'Max Episodes = {max_episodes}')
-
-        for episode in range(max_episodes):
-            orig_actor_weights = self.shared_actor.get_weights()  # Refresh local copies of weights
-            orig_critic_weights = self.shared_critic.get_weights()
-
-            # Pickle weights to ensure local copies are being used, not netrefs
-            orig_actor_weights = copy_local(orig_actor_weights)
-            orig_critic_weights = copy_local(orig_critic_weights)
-            self.local_actor.set_weights(orig_actor_weights)
-            self.local_critic.set_weights(orig_critic_weights)
-
-            done = False
-            step = 0
-            s = self.env.reset()
-            logger.info(f'Starting episode {episode}')
-            total_reward = 0
-
-            while not done:
-                if self.id == 0 and episode % 25 == 0:  # TODO: Pull from config
-                    self.env.render()
-                step += 1
-                a = self.choose_action(s.reshape(1, -1))
-                s_prime, r, done, _ = self.env.step(a)
-
-                # Store experience
-                self.memory.append((s, a, r, s_prime, done))
-                s = s_prime
-                total_reward += r
-
-                # Terminate loop anyways if max steps reached.
-                # Episode not marked as terminal so V(s') estimate will be used
-                if step == self.max_steps_per_episode:
-                    done = True
-
-                if done or step % self.train_interval == 0:
-                    states, actions, rewards, s_primes, flags = self.memory.sample()
-                    batch_size = states.shape[0]
-
-                    # Total n-step return from each state
-                    R = np.dot(G, rewards)
-
-                    # If final state was terminate than it's value is 0.
-                    # Otherwise, we must include the discounted value of the last state observed.
-                    # Discount factor for V(s') is gamma * discount for last reward observed before s'.
-                    if flags[-1] == False:
-                        terminal_val = self.local_critic.predict(s_primes[-1, :].reshape((1, -1)))
-                        R += (G[:, -1] * self.gamma * terminal_val).reshape(R.shape)
-
-                    # Train the actor network
-                    mask = np.zeros((batch_size, self.num_actions))
-                    mask[range(batch_size), actions.astype('int32').ravel()] = 1
-                    V = self.local_critic.predict_on_batch(states)
-                    advantage = R - V
-                    actor_err = self.train_actor_on_batch([states, mask, advantage])
-
-                    # Train the critic network
-                    critic_err = self.local_critic.train_on_batch(states[:-1, :], R[:-1])
-
-                    logger.info('{} | episode = {},  step = {},  actor error = {},  critic error = {}'.format(self.name, episode, step, '', critic_err))
-
-                    # Update the shared model weights and refresh local weights
-                    actor_delta = [new - old for new, old in zip(self.local_actor.get_weights(), orig_actor_weights)]
-                    orig_actor_weights = copy_local(self.shared_actor.add_delta(actor_delta))
-                    self.local_actor.set_weights(orig_actor_weights)
-
-                    critic_delta = [new - old for new, old in zip(self.local_critic.get_weights(), orig_critic_weights)]
-                    orig_critic_weights = copy_local(self.shared_critic.add_delta(critic_delta))  # Add deltas and get updated weights
-                    self.local_critic.set_weights(orig_critic_weights)  # Update the model with new weights
 
 
 def start_worker(id):
@@ -198,8 +167,8 @@ def start_worker(id):
     if 'c' not in locals():
         raise Exception()
 
-    worker = A3CWorker(id, c.root.config, c.root.config['actor'], c.root.config['critic'])
-    worker.train()
+    worker = A3CWorker(id, c.root.config, c.root.config['actor'], c.root.config['critic'], logger=c.root.logger)
+    worker.train(render_every_n=c.root.config.get('render_every_n', 0) if id == 0 else 0)    # Only root worker should render)
 
 def start_registry():
     from rpyc.utils.registry import UDPRegistryServer, REGISTRY_PORT, DEFAULT_PRUNING_TIMEOUT
@@ -214,12 +183,22 @@ def start_service():
                                          auto_register=True)
     s.start()
 
-# A3C https://arxiv.org/pdf/1602.01783.pdf
 
 class A3CAgent(AbstractAgent):
+    """
+    And implementation of Google DeepMind's Asynchronous Advantage Actor-Critic algorithm.
+    Uses an actor network to ouput the probability of taking each (discrete) action.
+    Uses a critic network to determine the q-value of the action taken.
+
+
+    Asynchronous Methods for Deep Reinforcement Learning (https://arxiv.org/pdf/1602.01783.pdf)
+    """
     def __init__(self, actor, critic, controller=None, **kwargs):
 
         super(A3CAgent, self).__init__(**kwargs)
+
+        if 'policy' in kwargs:
+            self.logger.warn('`Policy` parameter is invalid for A3C agents and will be ignored.')
 
         self.actor = actor
         self.critic = critic
@@ -255,16 +234,20 @@ class A3CAgent(AbstractAgent):
         else:
             self.controller = controller
 
+        self.controller.config['gamma'] = self.gamma
+
 
     def train(self, max_episodes, num_workers, **kwargs):
         """Train the agent in the environment for a specified number of episodes."""
 
-        from ..utils import async
-
         self.controller.config['env'] = self.env.spec.id
-        self.controller.config['gamma'] = 0.99 # TODO: pass in constructor
         self.controller.config['max_episodes'] = max_episodes
+
+        self.controller.config.update(kwargs)
+
         self.controller.config['max_steps_per_episode'] = self.max_steps_per_episode
+#        self.controller.config['render_every_n'] = kwargs.get('render_every_n', 0)
+        #self.controller.config['train_every_n']
 
         self.controller.create_model(name='actor',
                                      model_type=(type(self.actor).__module__, type(self.actor).__name__),
@@ -291,7 +274,7 @@ class A3CAgent(AbstractAgent):
                 p.join()
         finally:
             for p in self._non_worker_processes:
-                logger.info(f'Terminating {p}.')
+                self.logger.info(f'Terminating {p}.')
                 p.terminate()
                 p.join()
 
