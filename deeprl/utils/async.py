@@ -1,10 +1,15 @@
 import rpyc
 import pickle
+import logging
+logger = logging.getLogger(__name__)
 
 class SharedModelService(rpyc.Service):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+        # Allow workers to send messages to a central logger
+        self.logger = logger
 
         self.config = dict()
 
