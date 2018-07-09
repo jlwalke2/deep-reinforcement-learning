@@ -1,4 +1,3 @@
-# from multiprocessing.managers import SyncManager
 import rpyc
 import pickle
 
@@ -56,8 +55,3 @@ class SharedModel(object):
         return self.optimizer_type, self.optimizer_config
 
 
-# class ModelManager(SyncManager):
-#     pass
-#
-# ModelManager.register('Model', SharedModel)
-# ModelManager.register('Monitor', History)
