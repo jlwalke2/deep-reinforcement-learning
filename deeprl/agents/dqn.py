@@ -1,22 +1,39 @@
 import gym
 import numpy as np
 from ..utils.misc import keras2dict, dict2keras, unwrap_model
-from .DeepQAgent import DeepQAgent
+from .abstract import AbstractAgent
+from ..utils.callbacks import TensorBoardCallback
+from ..utils.misc import RandomSample
 import logging
-import keras.callbacks
+
 logger = logging.getLogger(__name__)
 
-import keras.callbacks
-tensorboard = keras.callbacks.TensorBoard(write_grads=True, write_images=True)
+
+class DeepQAgent(AbstractAgent):
+    def __init__(self, model, *args, **kwargs):
+        super(DeepQAgent, self).__init__(*args, **kwargs)
+        self.model = model
+        self.preprocess_steps = []
+
+    def train(self, steps_before_training: int = None, **kwargs):
+        # Unless otherwise specified, assume training doesn't start until a full sample of steps is observed
+        self._steps_before_training = steps_before_training or self.memory.sample_size
+
+        super(DeepQAgent, self).train(**kwargs)
+
 
 class DoubleDeepQAgent(DeepQAgent):
+    """
+    DDQN agent.  Uses a neural network to approximate Q(s,a) for all actions, and then uses a policy to select the best
+    action.
+
+    Appropriate for decrete action spaces.
+    """
     def __init__(self, **kwargs):
         super(DoubleDeepQAgent, self).__init__(**kwargs)
-        self._tensorboard_callback = keras.callbacks.TensorBoard(histogram_freq=1, write_grads=True)
-        self._tensorboard_callback.set_model(unwrap_model(self.model))
 
         # Additional metric values that this agent will set
-        self._metric_names.update({'error','delta', 'qvalues'})
+        self._metric_names.update({'error', 'delta', 'qvalues'})
 
         # Create the target model.  Same architecture as DeepQ agent, but separate weights
         self.target_model = self._clone_model(self.model)
@@ -29,6 +46,7 @@ class DoubleDeepQAgent(DeepQAgent):
 
         return self.policy(q_values)
 
+
     def train(self, target_model_update: float, **kwargs):
         if target_model_update <= 0:
             raise ValueError('target_model_update must be a positive number.')
@@ -36,6 +54,36 @@ class DoubleDeepQAgent(DeepQAgent):
         self._target_model_update = target_model_update
 
         super(DoubleDeepQAgent, self).train(**kwargs)
+
+
+    def _configure_tensorboard(self, path):
+        import tensorflow as tf
+
+        self._tensorboard_callback = TensorBoardCallback(path, histogram_freq=1, write_grads=True)
+        self._tensorboard_callback.set_model(unwrap_model(self.model))
+        self._tensorboard_callback.scalars += ['step', 'rolling_return']
+        self.add_callbacks(self._tensorboard_callback)
+
+        self.validation_data = RandomSample(gym.make(self.env.spec.id))
+        self.validation_data.run(sample_size=1000, thumbnail_size=(100, 75))
+
+        q_values = self.model.predict_on_batch(self.validation_data.states)
+        tf_q_values = tf.Variable(q_values, name='QValues')
+        tf_states = tf.Variable(self.validation_data.states, name='States')
+
+        values = np.max(q_values, axis=1)  # V(s) = max_a Q(s, a)
+        actions = np.argmax(q_values, axis=1)  # Best (greedy) action
+
+        self.tensorboard_metadata = {tf_states.name: dict(Value_0=values, Action_0=actions)}
+        sprites = {tf_states.name: (self.validation_data.sprite, self.validation_data.thumbnail_size),
+                   tf_q_values.name: (self.validation_data.sprite, self.validation_data.thumbnail_size)}
+
+        self._tensorboard_callback.add_embeddings([tf_states, tf_q_values], self.tensorboard_metadata, sprites)
+
+        input = self.validation_data.states
+        output = q_values
+        sample_weights = np.ones(input.shape[0])
+        self._tensorboard_callback.validation_data = [input, output, sample_weights]
 
 
     def _update_target_model(self, ratio=None):
@@ -50,6 +98,7 @@ class DoubleDeepQAgent(DeepQAgent):
         else:
             # Hard update
             self.target_model.set_weights(self.model.get_weights())
+
 
     def _update_weights(self):
         '''Randomly select experiences from the replay buffer to train on.'''
@@ -97,13 +146,29 @@ class DoubleDeepQAgent(DeepQAgent):
         # training.
         estimate = self.model.predict_on_batch(states)
         targets = estimate.copy()
-        targets[range(n), actions.astype('int32').ravel()] = updated_targets[:, 0] + 1e-10 # Add small epsilon to avoid 0 error
+        targets[range(n), actions.astype('int32').ravel()] = updated_targets[:,
+                                                             0] + 1e-10  # Add small epsilon to avoid 0 error
 
         diff = targets[range(n), actions.astype('int32').ravel()] - updated_targets[:, 0]
 
         error = self.model.train_on_batch(states, targets)
 
         return dict(total_error=error, delta=diff)
+
+
+    def on_execution_end(self, **kwargs):
+        if self._train and hasattr(self, 'tensorboard_metadata'):
+            # Get new q-value estimates for states
+            q_values = self.model.predict_on_batch(self.validation_data.states)
+            values = np.max(q_values, axis=1)       # V(s) = max_a Q(s, a)
+            actions = np.argmax(q_values, axis=1)   # Best (greedy) action
+
+            for embedding in self._tensorboard_callback.embeddings:
+                name = embedding.tensor_name
+                if name in self.tensorboard_metadata:
+                    metadata = self.tensorboard_metadata[name]
+                    metadata.update(dict(Value_1=values, Action_1=actions))
+                    self._tensorboard_callback.write_metadata(metadata, embedding.metadata_path)
 
 
     def __getstate__(self):
@@ -115,6 +180,7 @@ class DoubleDeepQAgent(DeepQAgent):
         state['env'] = self.env.spec.id
 
         return state
+
 
     def __setstate__(self, state):
         # Rebuild the Keras models
@@ -128,39 +194,3 @@ class DoubleDeepQAgent(DeepQAgent):
 
         # Restore everything else
         self.__dict__.update(state)
-
-    def on_execution_start(self, **kwargs):
-        super().on_execution_start(**kwargs)
-        self._tensorboard_callback.on_train_begin()
-
-    def on_warmup_start(self, **kwargs):
-        self._warmup = True
-        self._warmup_states = []
-        self._warmup_qvalues = []
-
-    def on_warmup_end(self, **kwargs):
-        self._warmup = False
-
-        input = np.asarray(self._warmup_states).reshape((-1, self.num_features))
-        output = np.asarray(self._warmup_qvalues).reshape((-1, self.num_actions))
-        sample_weights = np.ones(input.shape[0])
-
-        self._tensorboard_callback.validation_data = [input, output, sample_weights]
-
-    def on_step_end(self, **kwargs):
-        super().on_step_end(**kwargs)
-
-        if self._warmup:
-            self._warmup_states.append(kwargs['s'])
-            self._warmup_qvalues.append(kwargs['qvalues'])
-
-    def on_episode_end(self, **kwargs):
-        super().on_episode_end(**kwargs)
-
-        if not self._warmup:
-            self._tensorboard_callback.on_epoch_end(kwargs['episode'])
-
-    def on_execution_end(self, **kwargs):
-        super().on_execution_end(**kwargs)
-
-        self._tensorboard_callback.on_train_end()

@@ -1,6 +1,6 @@
 import numpy as np
 
-from . import AbstractAgent
+from .abstract import AbstractAgent
 
 
 class EvolutionStrategyAgent(AbstractAgent):

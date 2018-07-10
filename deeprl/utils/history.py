@@ -2,7 +2,10 @@ from collections import namedtuple
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib import animation
-
+import numpy as np
+from ..memories import TrajectoryMemory
+from ..policies import RandomPolicy
+from PIL import Image
 
 class History(object):
     '''Performance monitor that handles logging and metric calculations.'''

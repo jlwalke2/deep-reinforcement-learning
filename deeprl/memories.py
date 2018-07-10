@@ -1,5 +1,7 @@
 import numpy as np
+from collections import namedtuple
 
+Memories = namedtuple('Step', ['states', 'actions', 'rewards', 's_primes', 'terminal'])
 
 class Memory():
     '''Experience replay buffer for reinforcement learning.
@@ -13,7 +15,7 @@ class Memory():
         :param sample_size: Number of experiences to sample unless otherwise specified
         '''
         self.buffer = None                  # Lazy initialization since we don't know # of columns
-        self.max_len = maxlen
+        self.max_len = int(maxlen)
         self.is_full = False
         self.index = 0
         self.sample_size = sample_size
@@ -65,7 +67,7 @@ class Memory():
         s_primes = self.buffer[indx, self._field_splits[2]:self._field_splits[3]]
         flags = self.buffer[indx, self._field_splits[3]:].astype('bool_')
 
-        return states, actions, rewards, s_primes, flags
+        return Memories(states, actions, rewards, s_primes, flags)
 
 
     def __len__(self):
@@ -96,7 +98,7 @@ class TrajectoryMemory(Memory):
         # Overwrite existing rows with new rows instead of re-initializing buffer
         self.index = 0
 
-        return states, actions, rewards, s_primes, flags
+        return Memories(states, actions, rewards, s_primes, flags)
 
 
 
@@ -146,13 +148,13 @@ class PrioritizedMemory(Memory):
         s_primes = self.buffer[indx, self._field_splits[2]:self._field_splits[3]]
         flags = self.buffer[indx, self._field_splits[3]:self._field_splits[4]].astype('bool_')
 
-        return states, actions, rewards, s_primes, flags
+        return Memories(states, actions, rewards, s_primes, flags)
 
     def on_train_end(self, *args, **kwargs):
         if 'delta' in kwargs and kwargs['delta'] is not None:
             assert self.last_sample is not None
 
-            self.buffer[self.last_sample, -1] = np.abs(kwargs['delta'])
+            self.buffer[self.last_sample, -1] = np.abs(kwargs['delta'].ravel())
 
     def on_calculate_error(self, *args, **kwargs):
 

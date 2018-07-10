@@ -1,3 +1,7 @@
+import logging
+
+logger = logging.getLogger(__name__)
+
 class EventHandler():
     def __init__(self):
         self.metrics = set()
@@ -8,13 +12,24 @@ class EventHandler():
 
         # Call all metrics first and include the results when calling the remaining callbacks.
         for metric in self.metrics:
-            values.update(metric(**kwargs))
+            # Call the metric and add the result to the arguments passed to callbacks
+            # If the method signature is not correct (ie missing **kwargs) a TypeError is thrown.
+            # Raise an error to explicitly indicate which event caused the failure.
+            try:
+                values.update(metric(**kwargs))
+            except TypeError:
+                raise TypeError(f'An unhandled exception was raised while executing {metric}.')
 
         kwargs.update(values)
 
         # Call remaining functions
+        # If the method signature is not correct (ie missing **kwargs) a TypeError is thrown.
+        # Raise an error to explicitly indicate which event caused the failure.
         for event in self.callbacks:
-            event(**kwargs)
+            try:
+                event(**kwargs)
+            except TypeError:
+                raise TypeError(f'An unhandled exception was raised while calling {event}.')
 
         return values
 
@@ -29,7 +44,6 @@ class EventHandler():
         return len(self.metrics) + len(self.callbacks)
 
     def __iadd__(self, other):
-        t0 = dir(other)
         if getattr(other, 'is_metric', False):
             self.metrics.add(other)
         else:

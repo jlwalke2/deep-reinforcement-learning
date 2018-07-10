@@ -1,7 +1,16 @@
 import unittest
+from ..utils.async import ModelManager
+import gym
 from keras.layers import Dense
 from keras.models import Sequential
-from ..utils.async import ModelManager
+from keras.optimizers import rmsprop
+
+from deeprl.agents.dqn import DoubleDeepQAgent
+from deeprl.memories import PrioritizedMemory
+from deeprl.policies import BoltzmannPolicy, EpsilonGreedyPolicy
+from deeprl.utils.metrics import *
+import multiprocessing
+
 
 class Test(unittest.TestCase):
     def test_shared_model_weights(self):
@@ -55,3 +64,44 @@ class Test(unittest.TestCase):
 
         finally:
             manager.shutdown()
+
+    def test_doubleqagent(self):
+
+
+        env = gym.make('CartPole-v0')
+
+        num_features = env.observation_space.shape[0]
+        num_actions = env.action_space.n
+
+        model = Sequential()
+        model.add(Dense(16, input_dim=num_features, activation='relu'))
+        model.add(Dense(16, activation='relu'))
+        model.add(Dense(16, activation='relu'))
+        model.add(Dense(units=num_actions, activation='linear'))
+        model.compile(loss='mse', optimizer=rmsprop(lr=1e-3))
+
+        agent = DoubleDeepQAgent(env=env, model=model,
+                                 policy=BoltzmannPolicy(),
+                                 memory=PrioritizedMemory(maxlen=50000),
+                                 metrics=[EpisodeReturn(), RollingEpisodeReturn(), CumulativeReward(), EpisodeTime()],
+                                 gamma=0.99, max_steps_per_episode=500)
+
+        import pickle
+
+        s = agent.__getstate__()
+        t0 = pickle.dumps(agent)
+        t1 = pickle.loads(t0)
+
+        agent = DoubleDeepQAgent(env=env, model=model,
+                                 policy=EpsilonGreedyPolicy(min=0.05, max=0.5, decay=0.999),
+                                 memory=PrioritizedMemory(maxlen=50000),
+                                 metrics=[EpisodeReturn(), RollingEpisodeReturn(), CumulativeReward(), EpisodeTime()],
+                                 gamma=0.99, max_steps_per_episode=1000)
+
+        s = agent.__getstate__()
+        t0 = pickle.dumps(agent)
+        t1 = pickle.loads(t0)
+
+
+        pass
+

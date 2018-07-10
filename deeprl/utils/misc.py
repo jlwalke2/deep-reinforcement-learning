@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 import os
 import random as rnd
@@ -6,6 +7,123 @@ import keras.models
 from warnings import warn
 import matplotlib.pyplot as plt
 from matplotlib import animation
+from PIL import Image
+from ..policies import RandomPolicy
+from ..memories import TrajectoryMemory
+
+logger = logging.getLogger(__name__)
+
+
+class RandomSample(object):
+    """Generates a random sample of states from an environment."""
+
+    # TODO: Add support for max steps
+
+    def __init__(self, env, thumbnail_size=None):
+        self.env = env
+        self._data = None
+        self.policy = RandomPolicy(env)
+        self.thumbnail_size = thumbnail_size
+        self.thumbnails = []
+
+    # Taken from: https://github.com/tensorflow/tensorflow/issues/6322
+    def images_to_sprite(self, data):
+        """Creates the sprite image along with any necessary padding
+
+        Args:
+          data: NxHxW[x3] tensor containing the images.
+
+        Returns:
+          data: Properly shaped HxWx3 image with any necessary padding.
+        """
+        if len(data.shape) == 3:
+            data = np.tile(data[..., np.newaxis], (1, 1, 1, 3))
+        data = data.astype(np.float32)
+        min = np.min(data.reshape((data.shape[0], -1)), axis=1)
+        data = (data.transpose(1, 2, 3, 0) - min).transpose(3, 0, 1, 2)
+        max = np.max(data.reshape((data.shape[0], -1)), axis=1)
+        data = (data.transpose(1, 2, 3, 0) / max).transpose(3, 0, 1, 2)
+        # Inverting the colors seems to look better for MNIST
+        # data = 1 - data
+
+        n = int(np.ceil(np.sqrt(data.shape[0])))
+        padding = ((0, n ** 2 - data.shape[0]), (0, 0),
+                   (0, 0)) + ((0, 0),) * (data.ndim - 3)
+        data = np.pad(data, padding, mode='constant',
+                      constant_values=0)
+        # Tile the individual thumbnails into an image.
+        data = data.reshape((n, n) + data.shape[1:]).transpose((0, 2, 1, 3)
+                                                               + tuple(range(4, data.ndim + 1)))
+        data = data.reshape((n * data.shape[1], n * data.shape[3]) + data.shape[4:])
+        data = (data * 255).astype(np.uint8)
+        return data
+
+    def run(self, sample_size: int =1000, frame_skip: int =4, thumbnail_size=None):
+        if thumbnail_size:
+            self.thumbnail_size = thumbnail_size
+
+        memory = TrajectoryMemory(maxlen=sample_size)
+        s = self.env.reset()
+
+        logger.info(f'Randomly sampling {sample_size} states from the environment...')
+
+        for step in range(sample_size * frame_skip):
+            s = np.asarray(s)
+            a = self.policy(s)
+            s_prime, r, episode_done, _ = self.env.step(a)
+
+            if step % frame_skip == 0:
+                memory.append((s, a, r, s_prime, episode_done))
+
+
+                if self.thumbnail_size is not None:
+                    # TODO: Figure out how to render Env to array without displaying window
+                    image = Image.fromarray(self.env.render(mode='rgb_array'))
+                    self.thumbnails.append(np.asarray(image.resize(thumbnail_size)))
+
+            if episode_done:
+                s = self.env.reset()
+            else:
+                s = s_prime
+
+        self._data = memory.sample()
+
+        logger.info(f'Sampling complete.')
+
+    @property
+    def actions(self):
+        if self._data is None:
+            raise ValueError('The `.run()` method must be called before sample data is available.')
+
+        return self._data.actions
+
+    @property
+    def rewards(self):
+        if self._data is None:
+            raise ValueError('The `.run()` method must be called before sample data is available.')
+
+        return self._data.rewards
+
+    @property
+    def states(self):
+        if self._data is None:
+            raise ValueError('The `.run()` method must be called before sample data is available.')
+
+        return self._data.states
+
+    @property
+    def s_primes(self):
+        if self._data is None:
+            raise ValueError('The `.run()` method must be called before sample data is available.')
+
+        return self._data.s_primes
+
+
+    @property
+    def sprite(self):
+        sprite = self.images_to_sprite(np.asarray(self.thumbnails))
+        return Image.fromarray(sprite)
+
 
 def unwrap_model(model):
     """Extract the underlying Model instance from a Keras class."""

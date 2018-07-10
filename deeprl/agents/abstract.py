@@ -4,6 +4,7 @@ import numpy as np
 import logging
 from shutil import rmtree
 from tempfile import mkdtemp
+import keras.backend as K
 from keras.models import Model, Sequential
 from abc import ABCMeta, abstractmethod
 from collections import namedtuple
@@ -11,11 +12,12 @@ from ..utils import History, EventHandler
 from ..utils.metrics import EpisodeReturn, RollingEpisodeReturn, EpisodeTime
 
 Step = namedtuple('Step', ['s','a','r','s_prime','is_terminal'])
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 # TODO: Reconcile logging teplates with metric names
 # TODO: Change exploration episodes to exploration steps?
 # TODO: Generate static initial experiences, states, etc for use in virtual batch normalization and q-value plots
+# TODO: Use env.render(mode='rgb_array') to render output to numpy array and save as img.  Check render.modes in env.metadata?
 
 
 """Names of the events that the agent will raise.  Functions on callbacks with these names will be auto-wired up."""
@@ -76,18 +78,34 @@ class AbstractAgent:
 
 
 
-    def __init__(self, env, policy=None, memory=None, max_steps_per_episode=0, history=None, metrics=[], callbacks=[], name: str =None, api_key: str =None):
+    def __init__(self, env, gamma=0.9, policy=None, memory=None, max_steps_per_episode=0, history=None, metrics=[],
+                 callbacks=[], name: str =None, logger=None, api_key: str =None, tb_path: str = None):
         self.name = name or self.__class__.__name__
 
         """Names of metrics that the agent computes directly and publishes.  This is in addition to any metrics returned by callbacks."""
         self._metric_names = {'episode','render','episode_done','reward','action','step','total_steps'}
         self.env = env
+        self.gamma = gamma
         self.policy = policy
         self.memory = memory
         self.max_steps_per_episode = max_steps_per_episode
         self.num_actions = AbstractAgent._get_space_size(env.action_space)
         self.num_features = AbstractAgent._get_space_size(env.observation_space)
         self.api_key = api_key
+
+        # Setup event handlers for callbacks and metrics
+        self.execution_start = EventHandler()
+        self.warmup_start = EventHandler()
+        self.warmup_end = EventHandler()
+        self.episode_start = EventHandler()
+        self.step_start = EventHandler()
+        self.step_end = EventHandler()
+        self.train_start = EventHandler()
+        self.train_end = EventHandler()
+        self.episode_end = EventHandler()
+        self.execution_end = EventHandler()
+        self.callbacks = set()
+        self.tensorboard_path = tb_path
 
         # Setup default metrics if none were provided
         if len(metrics) == 0:
@@ -108,25 +126,23 @@ class AbstractAgent:
             else:
                 self.history = history[0]
 
-        # Setup event handlers for callbacks and metrics
-        self.execution_start = EventHandler()
-        self.warmup_start = EventHandler()
-        self.warmup_end = EventHandler()
-        self.episode_start = EventHandler()
-        self.step_start = EventHandler()
-        self.step_end = EventHandler()
-        self.train_start = EventHandler()
-        self.train_end = EventHandler()
-        self.episode_end = EventHandler()
-        self.execution_end = EventHandler()
-
-        # Automatically hook up any events
-        for observer in [self, self.policy, self.memory, logger] + callbacks:
-            self.wire_events(observer)
+        self.add_callbacks([self, self.policy, self.memory] + callbacks)
 
         # Logging templates
+        self.logger = logger or log
         self.step_end_template = None
-        self.episode_end_template = 'Episode {episode}: \tError: {total_error:.2f} \tReward: {episode_return: .2f} RollingEpisodeReward: {rolling_return: .2f} Runtime: {episode_time}'
+        self.episode_end_template = 'Episode {episode}: \tEpisode Steps: {step}  Error: {total_error:.2f}  Reward: {episode_return: .2f}  RollingEpisodeReward: {rolling_return: .2f}  Runtime: {episode_time}'
+
+    def _initialize(self):
+        """Perform any final initialization before the agent is executed."""
+
+        # Configure TensorBoard callbacks if requested
+        if self._train and self.tensorboard_path is not None:
+            if K.backend() != 'tensorflow':
+                raise RuntimeError('TensorBoard output is only available when using the Tensorflow backend.')
+
+            self._configure_tensorboard(self.tensorboard_path)
+
 
     @property
     def name(self):
@@ -146,12 +162,13 @@ class AbstractAgent:
     @history.setter
     def history(self, obj):
         if hasattr(self, '_history'):
-            self.unwire_events(self._history)
+            self._unwire_events(self._history)
         self._history = obj
-        self.wire_events(obj)
+        self._wire_events(obj)
 
 
-    def unwire_events(self, observer):
+    def _unwire_events(self, observer):
+        """De-register all corresponding events from each of oberver's event handlers."""
         for event in _AGENT_EVENTS:
             handler = event.replace('on_', '')
 
@@ -161,15 +178,26 @@ class AbstractAgent:
                     handler -= getattr(observer, event)
 
 
-    def wire_events(self, observer):
+    def _wire_events(self, observer):
+        """Automatically identify an observer's event handlers and wire them to the correct events."""
         for event in _AGENT_EVENTS:
-            handler = event.replace('on_', '')
+            handler = event.replace('on_', '', 1)
 
             if handler in dir(self):
                 handler = getattr(self, handler)
                 if event in dir(observer):
-                    t0 = getattr(observer, event)
                     handler += getattr(observer, event)
+
+
+    def add_callbacks(self, observers):
+        """Registers observers """
+        if not hasattr(observers, '__iter__'):
+            observers = [observers]
+
+        for observer in observers:
+            if observer not in self.callbacks:
+                self._wire_events(observer)
+                self.callbacks.add(observer)
 
 
     @abstractmethod
@@ -202,7 +230,7 @@ class AbstractAgent:
             return env_space.shape[0]
 
 
-    def preprocess_state(self, s, a, r, s_prime, episode_done):
+    def preprocess_observation(self, s, a, r, s_prime, episode_done):
         '''
         Called after a new step in the environment, but before the observation is added to memory or used for training.
         Override to perform reward shaping
@@ -212,6 +240,8 @@ class AbstractAgent:
     def test(self, num_episodes, frame_skip: int =1, render_every_n: int = 1, upload=False):
         # TODO: save & restore memory, history, callbacks, status
 
+        self._train = False
+
         self._exec_loop(num_episodes=num_episodes,
                         frame_skip=frame_skip,
                         warmup_steps=0,
@@ -219,7 +249,7 @@ class AbstractAgent:
                         upload=upload,
                         train=False)
 
-    def train(self, max_episodes: int =500, steps_before_training: int =None, frame_skip: int =4, render_every_n: int =0, upload: bool =False):
+    def train(self, max_episodes: int =500, steps_before_training: int =None, frame_skip: int =1, render_every_n: int =0, upload: bool =False):
         """Train the agent in the environment for a specified number of episodes.
 
         :param max_episodes: Terminate training after this many new episodes are observed
@@ -228,6 +258,8 @@ class AbstractAgent:
         :param render_every_n: Render every nth episode
         :param upload: Upload training results to OpenAI Gym site?
         """
+
+        self._train = True
 
         # Unless otherwise specified, assume training doesn't start until a full sample of steps is observed
         if steps_before_training is None:
@@ -249,6 +281,9 @@ class AbstractAgent:
         :param upload: Upload training results to OpenAI Gym site?
         """
 
+        if frame_skip <= 0:
+            raise ValueError(f'Invalid value of {frame_skip} for `frame_skip`. Value must be a positive integer.')
+
         # TODO: pass metrics during training
         # TODO: wire & unwire events
 
@@ -265,11 +300,12 @@ class AbstractAgent:
         # If 0 or None is passed, disable rendering
         if not render_every_n:
             render_every_n = num_episodes + 1
+
         try:
             self._status.total_steps = 0
 
             for episode_count in range(1, num_episodes + 1):
-
+                # Initial counters for the episode
                 self._status.episode = episode_count
                 self._status.render  = episode_count % render_every_n == 0
                 self._status.episode_done = False
@@ -291,11 +327,15 @@ class AbstractAgent:
 
                     # Action replay.  We repeat the selected action for n steps.
                     a = self.choose_action(s.reshape(1, -1))
+
+                    if isinstance(self.env.action_space, gym.spaces.Box):
+                        a = a.reshape(self.env.action_space.shape)
+
                     r = 0
 
                     # Replay the selected action as necessary
                     # Accumulate the reward from each action, but don't let the agent observe the intermediate states
-                    for _ in range(frame_skip):
+                    for i in range(frame_skip):
                         if self._status.render:
                             self.env.render()
 
@@ -306,7 +346,8 @@ class AbstractAgent:
                         if isinstance(r_new, np.ndarray):
                             r_new = np.sum(r_new)
 
-                        r += r_new
+                        # Discount the reward received by taking each action, after the first.
+                        r += r_new * np.power(self.gamma, i)
 
                         if episode_done:
                             break
@@ -315,17 +356,19 @@ class AbstractAgent:
                     self._status.step += 1
                     self._status.reward = r
                     self._status.total_steps += 1
-                    self._status.reward = r
 
-                    s, a, r, s_prime, episode_done = self.preprocess_state(s, a, r, s_prime, episode_done)
+                    s, a, r, s_prime, episode_done = self.preprocess_observation(s, a, r, s_prime, episode_done)
                     self._status.episode_done = episode_done
+
+                    # Store the experience before setting early termination flag.
+                    # Just because we end early in a state on one trajectory doesn't mean that state should always
+                    # be treated as a terminal state.
+                    if self.memory is not None:
+                        self.memory.append((s, a, r, s_prime, episode_done))
 
                     # Force the episode to end if we've reached the maximum number of steps allowed
                     if self.max_steps_per_episode and self._status.step >= self.max_steps_per_episode:
                         self._status.episode_done = True
-
-                    if self.memory is not None:
-                        self.memory.append((s, a, r, s_prime, self._status.episode_done))
 
                     self._raise_step_end_event(s=s, s_prime=s_prime, a=a, r=r)
 
@@ -360,9 +403,6 @@ class AbstractAgent:
             self._raise_execution_end_event()
 
 
-
-
-
     def _update_weights(self):
         """
         Called after the end of each step to allow the agent to perform any training updates.
@@ -370,6 +410,9 @@ class AbstractAgent:
         :return:  A dictionary of values to be added to _status or None
         """
         raise NotImplementedError
+
+    def _configure_tensorboard(self, path):
+        raise NotImplementedError()
 
     def __raise_event(self, event, **kwargs):
         # Ensure status information is passed to eventhandlers
@@ -400,6 +443,9 @@ class AbstractAgent:
         self.__raise_event(self.train_end, **kwargs)
 
     def _raise_execution_start_event(self, **kwargs):
+        # Perform any delayed initialization steps
+        self._initialize()
+
         self.__raise_event(self.execution_start, **kwargs)
 
     def _raise_execution_end_event(self, **kwargs):
@@ -421,17 +467,17 @@ class AbstractAgent:
         pass
 
     def on_step_end(self, **kwargs):
-        logger.debug(self._status)
+        self.logger.debug(self._status)
 
         if self.step_end_template:
-            logger.info(self.step_end_template.format(**kwargs))
+            self.logger.info(self.step_end_template.format(**kwargs))
 
     def on_episode_start(self, **kwargs):
         pass
 
     def on_episode_end(self, **kwargs):
         if self.episode_end_template:
-            logger.info(self.episode_end_template.format(**kwargs))
+            self.logger.info(self.episode_end_template.format(**kwargs))
 
     def on_execution_start(self, **kwargs):
         pass

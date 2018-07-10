@@ -1,14 +1,16 @@
 from collections import deque
 from datetime import datetime
 from functools import wraps
+import numpy as np
 
 # Deep Reinforcement Learnign that Matters (https://arxiv.org/pdf/1709.06560.pdf)
 
 def callback_return(*metrics: str):
-    """Designates that a function should return a specific set of metrics.
+    """Designates that the decorated function should return a specific set of metrics.
 
     Function will always return a dictionary of metrics and corresponding values.
-
+    All events decorated in this manner will be called before any non-decorated events, allowing the calculated
+    metrics to be published to other consumers.
     """
     assert len(metrics) > 0
 
@@ -79,7 +81,6 @@ class EpisodeReturn():
     def on_episode_end(self, **kwargs):
         return self._value
 
-
 class RollingEpisodeReturn():
     """Compute the rolling average of recent episode rewards."""
 
@@ -99,6 +100,23 @@ class RollingEpisodeReturn():
     def on_episode_end(self, **kwargs):
         self._queue.append(self._value)
         return sum(self._queue) / float(len(self._queue))
+
+class InitialStateValue():
+    """Stores an initial state sampled from the Environment and returns the value of that state as predicted by
+    the model after each episode terminates.
+    """
+    def __init__(self, env, model):
+        self._s0 = np.asarray(env.reset()).reshape((1, -1))
+        self._model = model
+
+
+    @callback_return('s0_value')
+    def on_episode_end(self, **kwargs):
+        # Return the model's predicted value on state 0
+        return np.asscalar(self._model.predict_on_batch(self._s0))
+
+
+
 
 
 
