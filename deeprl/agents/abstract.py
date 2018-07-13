@@ -260,6 +260,7 @@ class AbstractAgent:
         """
 
         self._train = True
+        self.logger.debug('Training started.')
 
         # Unless otherwise specified, assume training doesn't start until a full sample of steps is observed
         if steps_before_training is None:

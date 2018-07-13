@@ -1,12 +1,12 @@
 from . import AbstractAgent
 from deeprl.memories import TrajectoryMemory
 import gym
-import multiprocessing
-from multiprocessing import Process
+from multiprocessing import Process, current_process
 import numpy as np
 import keras.backend as K
 import keras.models
 import pickle
+
 
 DEFAULT_TRAIN_INTERVAL = 5 # Number of steps between weight updates
 
@@ -21,16 +21,16 @@ class A3CWorker(AbstractAgent):
         assert 'env' in shared_config, 'Configuration missing key "env".'
 
         self.id = id
-        self.name = multiprocessing.current_process().name
         self.config = shared_config
-
         self.local_actor = self._build_model(shared_actor, lambda y_true, y_pred: y_pred)
         self.local_critic = self._build_model(shared_critic, 'mse')
         self.shared_actor = shared_actor
         self.shared_critic = shared_critic
-
-        self.train_actor_on_batch = self._build_actor_train_func(self.local_actor)
+        self.train_actor_on_batch = self._build_actor_train_func(self.local_actor, beta=self.config['beta'])
         self.train_interval = self.config.get('train_every_n', DEFAULT_TRAIN_INTERVAL)
+
+        if 'preprocess_func' in self.config:
+            self.preprocess_observation = pickle.loads(self.config['preprocess_func'])
 
         env = gym.make(self.config['env'])
         memory = TrajectoryMemory(maxlen=self.train_interval)
@@ -100,14 +100,19 @@ class A3CWorker(AbstractAgent):
         self.logger.debug('Shared weights updated.')
 
 
-    def _build_actor_train_func(self, model):
+    def _build_actor_train_func(self, model, beta: float):
+
         if isinstance(model, keras.models.Sequential):
             model = model.model  # Unwrap internal Model from Sequential object
 
         # Define a custom objective function to maximize
         def objective(action, mask, advantage):
+            # Include entry regularization term to discourage early policy convergence
+            entropy = -K.sum(action * K.log(action + 1e-30), axis=-1)
+
             # Since Keras optimizers always minimize "loss" we'll have to minimize the negative of the objective
-            return -(K.sum(K.log(action + 1e-30) * mask, axis=-1) * advantage)
+            return -(K.sum(K.log(action + 1e-30) * mask, axis=-1) * advantage + beta * entropy)
+
 
         mask = K.placeholder(shape=model.output.shape, name='mask')
         advantage = K.placeholder(shape=(None,1), name='advantage')
@@ -167,8 +172,12 @@ def start_worker(id):
     if 'c' not in locals():
         raise Exception()
 
-    worker = A3CWorker(id, c.root.config, c.root.config['actor'], c.root.config['critic'], logger=c.root.logger)
-    worker.train(render_every_n=c.root.config.get('render_every_n', 0) if id == 0 else 0)    # Only root worker should render)
+    worker = A3CWorker(id, c.root.config, c.root.config['actor'], c.root.config['critic'], logger=c.root.logger, name=f'Worker{id}')
+
+    max_episodes = worker.config['max_episodes']
+    render_freq = worker.config.get('render_every_n', 0) if id == 0 else 0  # Only root worker should render)
+
+    worker.train(max_episodes=max_episodes, render_every_n=render_freq)
 
 def start_registry():
     from rpyc.utils.registry import UDPRegistryServer, REGISTRY_PORT, DEFAULT_PRUNING_TIMEOUT
@@ -193,7 +202,7 @@ class A3CAgent(AbstractAgent):
 
     Asynchronous Methods for Deep Reinforcement Learning (https://arxiv.org/pdf/1602.01783.pdf)
     """
-    def __init__(self, actor, critic, controller=None, **kwargs):
+    def __init__(self, actor, critic, controller=None, beta=0.01, **kwargs):
 
         super(A3CAgent, self).__init__(**kwargs)
 
@@ -202,6 +211,7 @@ class A3CAgent(AbstractAgent):
 
         self.actor = actor
         self.critic = critic
+        self.beta = beta
         self._non_worker_processes = []
 
         if controller is None:
@@ -237,17 +247,18 @@ class A3CAgent(AbstractAgent):
         self.controller.config['gamma'] = self.gamma
 
 
-    def train(self, max_episodes, num_workers, **kwargs):
+    def train(self, max_episodes, num_workers, preprocess_func=None, train_every_n=DEFAULT_TRAIN_INTERVAL, **kwargs):
         """Train the agent in the environment for a specified number of episodes."""
 
         self.controller.config['env'] = self.env.spec.id
+        self.controller.config['beta'] = self.beta
+
         self.controller.config['max_episodes'] = max_episodes
-
-        self.controller.config.update(kwargs)
-
+        if preprocess_func:
+            self.controller.config['preprocess_func'] = pickle.dumps(preprocess_func)
         self.controller.config['max_steps_per_episode'] = self.max_steps_per_episode
-#        self.controller.config['render_every_n'] = kwargs.get('render_every_n', 0)
-        #self.controller.config['train_every_n']
+        self.controller.config['train_interval'] = train_every_n
+        self.controller.config.update(kwargs)
 
         self.controller.create_model(name='actor',
                                      model_type=(type(self.actor).__module__, type(self.actor).__name__),
@@ -265,7 +276,7 @@ class A3CAgent(AbstractAgent):
                                      weights=self.critic.get_weights())
 
         try:
-            processes = [Process(target=start_worker, args=(i,), name='Worker %s' % i) for i in range(num_workers)]
+            processes = [Process(target=start_worker, args=(i,), name=f'Worker{i}') for i in range(num_workers)]
 
             for p in processes:
                 p.start()
