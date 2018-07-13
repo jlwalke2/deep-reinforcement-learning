@@ -1,6 +1,5 @@
 import gym
 from deeprl.agents.a3c import A3CAgent
-from deeprl.policies import BoltzmannPolicy
 from keras.layers import Dense, Flatten, Input, concatenate
 from keras.models import Sequential, Model
 from keras.optimizers import rmsprop
@@ -16,6 +15,19 @@ config = dict(version=1,
 import logging.config
 logging.config.dictConfig(config)
 
+
+def shape_reward(*args):
+    s, a, r, s_prime, done = args
+    def potential(state):
+        x_pos = state[0]
+        y_pos = state[1]
+
+        return 10 * ((1 - abs(x_pos)) + (1 - y_pos)) # Encourage moving to 0,0 (center of landing pad)
+
+    r = r + 0.99*potential(s_prime) - potential(s)
+    return (s, a, r, s_prime, done)
+
+
 if __name__ == '__main__':
     env = gym.make('LunarLander-v2')
 
@@ -27,17 +39,17 @@ if __name__ == '__main__':
         Dense(32, activation='relu'),
         Dense(units=num_actions, activation='softmax')
     ])
-    actor.compile(loss='mse', optimizer=rmsprop(lr=0.0016, decay=0.000001))
+    actor.compile(loss='mse', optimizer=rmsprop(lr=0.0016))
 
     critic = Sequential([
         Dense(32, input_dim=num_features, activation='relu'),
         Dense(32, activation='relu'),
         Dense(units=1, activation='linear')
     ])
-    critic.compile(loss='mse', optimizer=rmsprop(lr=0.0016, decay=0.000001))
+    critic.compile(loss='mse', optimizer=rmsprop(lr=0.0016))
 
-    agent = A3CAgent(env=env, gamma=0.99, actor=actor, critic=critic, max_steps_per_episode=500)
-    agent.train(num_workers=3, max_episodes=5000, render_every_n=50)
+    agent = A3CAgent(env=env, gamma=0.99, actor=actor, critic=critic, max_steps_per_episode=500, beta=2.5)
+    agent.train(num_workers=3, max_episodes=500, train_every_n=5, render_every_n=0, preprocess_func=shape_reward)
 
     df = agent.history.get_episode_metrics()
     if df.shape[0] > 0:
