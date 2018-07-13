@@ -3,5 +3,5 @@ gym[all]
 tensorflow
 keras==2.0.6
 matplotlib
-pandas
+pandas==0.22.0
 rpyc
