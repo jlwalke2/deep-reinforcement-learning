@@ -48,6 +48,8 @@ class A3CWorker(AbstractAgent):
         # Automatically refresh the local weights when each episode starts
         self.episode_start += self._refresh_local_weights
 
+        self.episode_end_template = self.name + '  Episode {episode}: \tEpisode Steps: {step}  Error: {total_error:.2f}  Reward: {episode_return: .2f}  RollingEpisodeReward: {rolling_return: .2f}  Runtime: {episode_time}'
+
         self.logger.info(f'A3CWorker instance {self.name} created.')
 
     def _refresh_local_weights(self, *args, **kwargs):
