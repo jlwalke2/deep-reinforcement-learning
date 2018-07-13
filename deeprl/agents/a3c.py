@@ -1,12 +1,14 @@
 from . import AbstractAgent
 from deeprl.memories import TrajectoryMemory
 import gym
-from multiprocessing import Process, current_process
+import multiprocessing
 import numpy as np
 import keras.backend as K
 import keras.models
 import pickle
 
+# Linux default is "fork" which tries to share TensorFlow sessions.  Force creation of new resources.
+mp = multiprocessing.get_context('spawn')
 
 DEFAULT_TRAIN_INTERVAL = 5 # Number of steps between weight updates
 
@@ -219,12 +221,12 @@ class A3CAgent(AbstractAgent):
             # rpyc.utils.factory.DiscoveryError: no servers exposing 'sharedmodel' were found
             import rpyc, time, socket
 
-            p1 = Process(target=start_registry, name='RPyC Service', daemon=True)
+            p1 = mp.Process(target=start_registry, name='RPyC Service', daemon=True)
             p1.start()
             self._non_worker_processes.append(p1)
             time.sleep(5)
 
-            p2 = Process(target=start_service, name='RPyC Service', daemon=True)
+            p2 = mp.Process(target=start_service, name='RPyC Service', daemon=True)
             p2.start()
             self._non_worker_processes.append(p2)
             time.sleep(5)
@@ -276,7 +278,7 @@ class A3CAgent(AbstractAgent):
                                      weights=self.critic.get_weights())
 
         try:
-            processes = [Process(target=start_worker, args=(i,), name=f'Worker{i}') for i in range(num_workers)]
+            processes = [mp.Process(target=start_worker, args=(i,), name=f'Worker{i}') for i in range(num_workers)]
 
             for p in processes:
                 p.start()
