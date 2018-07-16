@@ -6,6 +6,8 @@ import numpy as np
 import keras.backend as K
 import keras.models
 import pickle
+import gym.spaces
+
 
 # Linux default is "fork" which tries to share TensorFlow sessions.  Force creation of new resources.
 mp = multiprocessing.get_context('spawn')
@@ -37,6 +39,8 @@ class A3CWorker(AbstractAgent):
         env = gym.make(self.config['env'])
         memory = TrajectoryMemory(maxlen=self.train_interval)
         max_steps = self.config['max_steps_per_episode']
+        self.continuous_actions = isinstance(env.action_space, gym.spaces.Box)
+
 
         super(A3CWorker, self).__init__(env, gamma=self.config['gamma'], memory=memory, max_steps_per_episode=max_steps, **kwargs)
 
@@ -83,8 +87,11 @@ class A3CWorker(AbstractAgent):
             R += (self.G[:, -1] * self.gamma * terminal_val).reshape(R.shape)
 
         # Train the actor network
-        mask = np.zeros((batch_size, self.num_actions))
-        mask[range(batch_size), actions.astype('int32').ravel()] = 1
+        if self.continuous_actions:
+            mask = np.ones((batch_size, self.num_actions))
+        else:
+            mask = np.zeros((batch_size, self.num_actions))
+            mask[range(batch_size), actions.astype('int32').ravel()] = 1
         V = self.local_critic.predict_on_batch(states)
         advantage = R - V
         actor_err = self.train_actor_on_batch([states, mask, advantage])
@@ -151,11 +158,14 @@ class A3CWorker(AbstractAgent):
         return local_model
 
     def choose_action(self, state):
-        # Actor network returns probability of choosing each action in current state
+
         actions = self.local_actor.predict_on_batch(state)
 
-        return np.random.choice(np.arange(actions.size), p=actions.ravel())
-
+        if self.continuous_actions:
+            return actions
+        else:
+            # Actor network returns probability of choosing each discrete action
+            return np.random.choice(np.arange(actions.size), p=actions.ravel())
 
 
 def start_worker(id):
@@ -176,7 +186,8 @@ def start_worker(id):
     if 'c' not in locals():
         raise Exception()
 
-    worker = A3CWorker(id, c.root.config, c.root.config['actor'], c.root.config['critic'], logger=c.root.logger, name=f'Worker{id}')
+    worker = A3CWorker(id, c.root.config, c.root.config['actor'], c.root.config['critic'],
+                       logger=c.root.logger, name=f'Worker{id}', history=c.root.history)
 
     max_episodes = worker.config['max_episodes']
     render_freq = worker.config.get('render_every_n', 0) if id == 0 else 0  # Only root worker should render)

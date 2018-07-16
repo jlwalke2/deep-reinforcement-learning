@@ -12,6 +12,8 @@ class SharedModelService(rpyc.Service):
         self.logger = logger
 
         self.config = dict()
+        from deeprl.utils import History
+        self.history = History()
 
     def on_connect(self, conn):
         conn._config.update(dict(allow_pickle=True,
