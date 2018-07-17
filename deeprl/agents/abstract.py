@@ -285,6 +285,8 @@ class AbstractAgent:
         if frame_skip <= 0:
             raise ValueError(f'Invalid value of {frame_skip} for `frame_skip`. Value must be a positive integer.')
 
+        num_episodes = int(num_episodes)
+
         # TODO: pass metrics during training
         # TODO: wire & unwire events
 

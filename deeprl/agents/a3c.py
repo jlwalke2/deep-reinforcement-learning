@@ -30,7 +30,6 @@ class A3CWorker(AbstractAgent):
         self.local_critic = self._build_model(shared_critic, 'mse')
         self.shared_actor = shared_actor
         self.shared_critic = shared_critic
-        self.train_actor_on_batch = self._build_actor_train_func(self.local_actor, beta=self.config['beta'])
         self.train_interval = self.config.get('train_every_n', DEFAULT_TRAIN_INTERVAL)
 
         if 'preprocess_func' in self.config:
@@ -41,8 +40,13 @@ class A3CWorker(AbstractAgent):
         max_steps = self.config['max_steps_per_episode']
         self.continuous_actions = isinstance(env.action_space, gym.spaces.Box)
 
+        # Beta encourages uniform distribution over discrete actions.  Not applicable for continuous actions.
+        beta = 0 if self.continuous_actions else self.config['beta']
+        self.train_actor_on_batch = self._build_actor_train_func(self.local_actor, beta=beta)
 
-        super(A3CWorker, self).__init__(env, gamma=self.config['gamma'], memory=memory, max_steps_per_episode=max_steps, **kwargs)
+        policy = pickle.loads(self.config['policy']) if 'policy' in self.config else None
+
+        super(A3CWorker, self).__init__(env, policy=policy, gamma=self.config['gamma'], memory=memory, max_steps_per_episode=max_steps, **kwargs)
 
         # Construct an upper triangular matrix where each diagonal 0..k = the discount factor raised to that power
         # Once constructed, the n-step return can be computed as Gr where G is the matrix of discount factors
@@ -158,13 +162,16 @@ class A3CWorker(AbstractAgent):
         return local_model
 
     def choose_action(self, state):
-
         actions = self.local_actor.predict_on_batch(state)
-
-        if self.continuous_actions:
-            return actions
+        
+        if self.policy:
+            # Allow policy to override default behavior
+            return self.policy(actions)
+        elif self.continuous_actions:
+            # Assume actor outputs continuous action values
+            actions
         else:
-            # Actor network returns probability of choosing each discrete action
+            # Assume actor outputs probability distribution over discrete actions.  Select an action.
             return np.random.choice(np.arange(actions.size), p=actions.ravel())
 
 
@@ -271,6 +278,9 @@ class A3CAgent(AbstractAgent):
         self.controller.config['max_episodes'] = max_episodes
         if preprocess_func:
             self.controller.config['preprocess_func'] = pickle.dumps(preprocess_func)
+        if self.policy:
+            self.controller.config['policy'] = pickle.dumps(self.policy)
+
         self.controller.config['max_steps_per_episode'] = self.max_steps_per_episode
         self.controller.config['train_interval'] = train_every_n
         self.controller.config.update(kwargs)
