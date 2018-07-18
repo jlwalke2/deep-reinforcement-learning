@@ -38,11 +38,12 @@ if __name__ == '__main__':
     ])
     critic.compile(loss='mse', optimizer=rmsprop(lr=0.0016))
 
-    from deeprl.policies import NoisyPolicy
-    policy = NoisyPolicy(theta=0.15, sigma=0.25)
+    # from deeprl.policies import NoisyPolicy
+    # policy = NoisyPolicy(theta=0.15, sigma=0.25)
+    policy=None
 
 
-    agent = A3CAgent(env=env, gamma=0.99, actor=actor, critic=critic, max_steps_per_episode=2000, beta=0, policy=policy)
+    agent = A3CAgent(env=env, gamma=0.99, actor=actor, critic=critic, max_steps_per_episode=500, beta=10., policy=policy)
     agent.train(num_workers=4, max_episodes=1e6, train_every_n=5, render_every_n=1, frame_skip=4)
 
     df = agent.history.get_episode_metrics()

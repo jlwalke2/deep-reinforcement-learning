@@ -40,13 +40,11 @@ class A3CWorker(AbstractAgent):
         max_steps = self.config['max_steps_per_episode']
         self.continuous_actions = isinstance(env.action_space, gym.spaces.Box)
 
-        # Beta encourages uniform distribution over discrete actions.  Not applicable for continuous actions.
-        beta = 0 if self.continuous_actions else self.config['beta']
+        # Beta encourages uniform distribution over actions and therefore exploration instead of exploitation.
+        beta = self.config['beta']
         self.train_actor_on_batch = self._build_actor_train_func(self.local_actor, beta=beta)
 
-        policy = pickle.loads(self.config['policy']) if 'policy' in self.config else None
-
-        super(A3CWorker, self).__init__(env, policy=policy, gamma=self.config['gamma'], memory=memory, max_steps_per_episode=max_steps, **kwargs)
+        super(A3CWorker, self).__init__(env, gamma=self.config['gamma'], memory=memory, max_steps_per_episode=max_steps, **kwargs)
 
         # Construct an upper triangular matrix where each diagonal 0..k = the discount factor raised to that power
         # Once constructed, the n-step return can be computed as Gr where G is the matrix of discount factors
@@ -122,8 +120,14 @@ class A3CWorker(AbstractAgent):
 
         # Define a custom objective function to maximize
         def objective(action, mask, advantage):
-            # Include entry regularization term to discourage early policy convergence
-            entropy = -K.sum(action * K.log(action + 1e-30), axis=-1)
+
+            if self.continuous_actions:
+                #  Entropy calc is .5(log(2pi * sigma^2) + 1)
+                # Sigma^2 computed from SoftPlus function and then summed over action dims in the observation
+                entropy = -0.5 * (K.log(2 * np.pi * (K.sum(K.softplus(action), axis=-1))))
+            else:
+                # Include entry regularization term to discourage early policy convergence
+                entropy = -K.sum(action * K.log(action + 1e-30), axis=-1)
 
             # Since Keras optimizers always minimize "loss" we'll have to minimize the negative of the objective
             return -(K.sum(K.log(action + 1e-30) * mask, axis=-1) * advantage + beta * entropy)
@@ -164,12 +168,14 @@ class A3CWorker(AbstractAgent):
     def choose_action(self, state):
         actions = self.local_actor.predict_on_batch(state)
         
-        if self.policy:
-            # Allow policy to override default behavior
-            return self.policy(actions)
-        elif self.continuous_actions:
+        if self.continuous_actions:
+            # TODO: Push down to Keras during init?
+            mu = actions.ravel()  # Assuming linear output
+            covar = np.log(1 + np.exp(mu)) * np.identity(len(mu))
+            actions = np.random.multivariate_normal(mu, covar)
+
             # Assume actor outputs continuous action values
-            actions
+            return actions
         else:
             # Assume actor outputs probability distribution over discrete actions.  Select an action.
             return np.random.choice(np.arange(actions.size), p=actions.ravel())
@@ -229,7 +235,7 @@ class A3CAgent(AbstractAgent):
         super(A3CAgent, self).__init__(**kwargs)
 
         if 'policy' in kwargs:
-            self.logger.warn('`Policy` parameter is invalid for A3C agents and will be ignored.')
+            self.logger.warn('The `policy` parameter is invalid for A3C agents and will be ignored.')
 
         self.actor = actor
         self.critic = critic
